@@ -563,7 +563,7 @@ function ingRowHTML(r, idx){
     ` : `
       <input class="input" placeholder="ชื่อวัตถุดิบ" value="${esc(ing.name||'')}" oninput="updIngField('${r.id}',${idx},'name',this.value)" />
     `}
-    <input class="input" type="number" min="0" step="1" value="${ing.qty||0}" placeholder="ปริมาณ"
+    <input class="input" type="number" min="0" step="1" value="${ing.qty??''}" placeholder="ปริมาณ"
       oninput="updIngField('${r.id}',${idx},'qty',this.value)" />
     ${isPantry ? `
       <div class="muted" style="font-size:12px">${esc(ingUnitLabel(ing))}</div>
@@ -573,7 +573,7 @@ function ingRowHTML(r, idx){
     ${isPantry ? `
       <div class="num" id="ingcost_${r.id}_${idx}" style="font-size:14px">${num2(cost)}</div>
     ` : `
-      <input class="input" type="number" min="0" step="0.01" value="${ing.unitCost||0}" placeholder="บาท/หน่วย"
+      <input class="input" type="number" min="0" step="0.01" value="${ing.unitCost??''}" placeholder="บาท/หน่วย"
         oninput="updIngField('${r.id}',${idx},'unitCost',this.value)" />
     `}
     <button class="btn btn-ghost btn-sm" onclick="removeIngredient('${r.id}',${idx})" title="ลบ">✕</button>
@@ -586,7 +586,7 @@ function addIngredient(rid, mode){
     const first = state.pantry[0];
     r.ingredients.push({id:uid('i'), mode:'pantry', pantryId: first? first.id : null, qty:0});
   } else {
-    r.ingredients.push({id:uid('i'), mode:'custom', name:'', qty:0, unit:'กรัม', unitCost:0});
+    r.ingredients.push({id:uid('i'), mode:'custom', name:'', qty:'', unit:'', unitCost:''});
   }
   document.getElementById('ingTable_'+rid).innerHTML = ingTableInner(r);
   refreshCalcPanel(rid);
@@ -602,9 +602,10 @@ function removeIngredient(rid, idx){
 function switchIngMode(rid, idx, mode){
   const r = findRecipe(rid);
   const ing = r.ingredients[idx];
+  const priorName = ingName(ing);
   ing.mode = mode;
   if(mode==='pantry'){ ing.pantryId = state.pantry[0]? state.pantry[0].id : null; }
-  else { ing.name = ingName(ing)==='(ถูกลบจากคลัง)'? '' : ingName(ing); ing.unit='กรัม'; ing.unitCost=0; }
+  else { ing.name = (priorName==='(ถูกลบจากคลัง)'||priorName==='(ไม่มีชื่อ)')? '' : priorName; ing.unit=''; ing.unitCost=''; }
   const rowEl = document.getElementById('ingrow_'+rid+'_'+idx);
   rowEl.outerHTML = ingRowHTML(r, idx);
   refreshCalcPanel(rid);
