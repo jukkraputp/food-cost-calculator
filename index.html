@@ -77,6 +77,11 @@ a{color:var(--color-accent)}
 .filepick input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer}
 .savebadge{font-size:11px;color:var(--color-accent-2-700);display:flex;align-items:center;gap:5px}
 .savebadge .dot{width:7px;height:7px;border-radius:999px;background:var(--color-accent-2-600)}
+.savebadge.saving{color:var(--color-accent-700)}
+.savebadge.saving .dot{background:var(--color-accent-600);animation:pulse 1s ease-in-out infinite}
+.savebadge.error{color:var(--color-danger)}
+.savebadge.error .dot{background:var(--color-danger)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
 
 .tabs{position:sticky;top:60px;z-index:29;background:var(--color-bg);border-bottom:1px solid rgba(0,0,0,.06);
   display:flex;gap:4px;padding:0 22px;overflow-x:auto}
@@ -179,44 +184,108 @@ function seedPantry(){
 }
 
 function seedRecipes(pantry){
-  const byName = n => pantry.find(p=>p.name===n).id;
-  return [
-    { id:uid('r'), name:'บราวนี่ดาร์กช็อกโกแลต', category:'ขนม', yieldQty:25, yieldUnit:'กล่อง',
-      ingredients:[
-        {id:uid('i'), mode:'pantry', pantryId:byName('ดาร์กช็อกโกแลต 70%'), qty:300},
-        {id:uid('i'), mode:'pantry', pantryId:byName('เนยเค็ม'), qty:246},
-        {id:uid('i'), mode:'pantry', pantryId:byName('แป้งสาลีอเนกประสงค์'), qty:300},
-        {id:uid('i'), mode:'pantry', pantryId:byName('น้ำตาลทราย'), qty:546},
-        {id:uid('i'), mode:'pantry', pantryId:byName('ผงโกโก้'), qty:90},
-        {id:uid('i'), mode:'pantry', pantryId:byName('ไข่ไก่ เบอร์ 2'), qty:6},
-        {id:uid('i'), mode:'pantry', pantryId:byName('ผงฟู'), qty:4},
-        {id:uid('i'), mode:'pantry', pantryId:byName('เกลือ'), qty:4},
-        {id:uid('i'), mode:'pantry', pantryId:byName('กลิ่นวานิลลาบัตเตอร์'), qty:3},
-      ],
-      packagingCost:1.35, laborRate:60, laborHours:1, gasCost:15, deliveryCost:0, overheadPct:20,
-      targetPct:40, sellPrice:15, note:'' },
-    { id:uid('r'), name:'คุกกี้เนยสดช็อกชิพ', category:'ขนม', yieldQty:40, yieldUnit:'ชิ้น',
-      ingredients:[
-        {id:uid('i'), mode:'pantry', pantryId:byName('เนยเค็ม'), qty:200},
-        {id:uid('i'), mode:'pantry', pantryId:byName('แป้งสาลีอเนกประสงค์'), qty:250},
-        {id:uid('i'), mode:'pantry', pantryId:byName('น้ำตาลทราย'), qty:150},
-        {id:uid('i'), mode:'pantry', pantryId:byName('ไข่ไก่ เบอร์ 2'), qty:2},
-        {id:uid('i'), mode:'pantry', pantryId:byName('ดาร์กช็อกโกแลต 70%'), qty:150},
-      ],
-      packagingCost:0.5, laborRate:60, laborHours:0.75, gasCost:10, deliveryCost:0, overheadPct:15,
-      targetPct:45, sellPrice:7.5, note:'' },
-  ];
+  return [];
 }
 
 function seedSettings(){
   return { shopName:'ครัวของหนู', defaultPackaging:1.35, defaultLabor:60, defaultOverhead:20, defaultTarget:40 };
 }
 
-let state = { settings: seedSettings(), pantry: seedPantry(), recipes: null };
-state.recipes = seedRecipes(state.pantry);
+/* ============================== DATA CLIENT ==============================
+   All persistence goes through this object. Every method returns a Promise
+   and is commented with the REST endpoint it stands in for, so swapping the
+   backing store later means rewriting only the bodies in this block (e.g.
+   replace localStorage calls with fetch() calls to your API) — nothing
+   elsewhere in the app needs to change.
+============================================================================ */
+const STORAGE_PREFIX = 'foodCostCalculator:v1:';
+
+function localGet(key, fallback){
+  try{
+    const raw = localStorage.getItem(STORAGE_PREFIX+key);
+    return raw==null ? fallback : JSON.parse(raw);
+  }catch(e){ return fallback; }
+}
+function localSet(key, value){ localStorage.setItem(STORAGE_PREFIX+key, JSON.stringify(value)); }
+function localRemove(key){ localStorage.removeItem(STORAGE_PREFIX+key); }
+
+const api = {
+  // GET /settings
+  async getSettings(){ return localGet('settings', null); },
+  // PUT /settings
+  async saveSettings(settings){ localSet('settings', settings); return settings; },
+
+  // GET /pantry
+  async listPantry(){ return localGet('pantry', null); },
+  // PUT /pantry  (bulk replace — simplest mapping for a client-held array;
+  // a real API could instead expose POST/PATCH/DELETE per item)
+  async savePantry(pantry){ localSet('pantry', pantry); return pantry; },
+
+  // GET /recipes
+  async listRecipes(){ return localGet('recipes', null); },
+  // PUT /recipes
+  async saveRecipes(recipes){ localSet('recipes', recipes); return recipes; },
+
+  // DELETE /data  (reset everything)
+  async clearAll(){ localRemove('settings'); localRemove('pantry'); localRemove('recipes'); },
+};
+
+let state = { settings: null, pantry: [], recipes: [] };
 
 let ui = { tab:'recipes', recipeId:null, search:'', pantrySearch:'', pantryEditing:null, pantryAdding:false,
   quick:{ mat:100, pack:10, labor:30, gas:10, delivery:0, overhead:15, yieldQty:10, target:35, sell:0 } };
+
+/* ============================== PERSISTENCE ============================== */
+let saveStatus = 'idle'; // idle | saving | saved | error
+let persistTimer = null;
+
+async function persistAll(){
+  saveStatus = 'saving';
+  updateSaveBadge();
+  try{
+    await Promise.all([
+      api.saveSettings(state.settings),
+      api.savePantry(state.pantry),
+      api.saveRecipes(state.recipes),
+    ]);
+    saveStatus = 'saved';
+  }catch(err){
+    console.error('Failed to save data', err);
+    saveStatus = 'error';
+  }
+  updateSaveBadge();
+}
+function schedulePersist(){
+  clearTimeout(persistTimer);
+  persistTimer = setTimeout(persistAll, 300);
+}
+function updateSaveBadge(){
+  const el = document.getElementById('saveBadge');
+  if(!el) return;
+  const map = {
+    idle:{cls:'', text:'บันทึกอัตโนมัติในเครื่องนี้'},
+    saving:{cls:'saving', text:'กำลังบันทึก...'},
+    saved:{cls:'', text:'บันทึกแล้ว'},
+    error:{cls:'error', text:'บันทึกไม่สำเร็จ'},
+  };
+  const s = map[saveStatus] || map.idle;
+  el.className = 'savebadge '+s.cls;
+  el.innerHTML = `<span class="dot"></span>${s.text}`;
+}
+
+async function bootstrap(){
+  app.innerHTML = `<div style="padding:60px 20px;text-align:center;color:rgba(32,30,29,.55)">กำลังโหลดข้อมูล...</div>`;
+  const [settings, pantry, recipes] = await Promise.all([api.getSettings(), api.listPantry(), api.listRecipes()]);
+  if(settings && pantry && recipes){
+    state = {settings, pantry, recipes};
+  } else {
+    state.settings = seedSettings();
+    state.pantry = seedPantry();
+    state.recipes = seedRecipes(state.pantry);
+    await persistAll();
+  }
+  render();
+}
 
 /* ============================== HELPERS ============================== */
 function findRecipe(id){ return state.recipes.find(r=>r.id===id); }
@@ -278,8 +347,6 @@ function calcRecipe(r){
     revenue,profit,margin,profitBasic,marginBasic,compare,yieldQty};
 }
 
-function markSaved(){ /* in-memory only; export reminder shown in topbar */ }
-
 /* ============================== RENDER ROOT ============================== */
 const app = document.getElementById('app');
 function render(){ app.innerHTML = shellHTML(); }
@@ -289,7 +356,7 @@ function shellHTML(){
   ${topbarHTML()}
   ${tabsHTML()}
   <main>${viewHTML()}</main>
-  <footer class="appfoot">ข้อมูลทั้งหมดเก็บอยู่ในหน่วยความจำของแท็บนี้เท่านั้น (ไม่ใช้ localStorage) — กด "ส่งออกข้อมูล" เพื่อบันทึกเป็นไฟล์ .json แล้วกด "นำเข้าข้อมูล" เพื่อโหลดกลับมาใช้ครั้งถัดไปหรือย้ายเครื่อง</footer>
+  <footer class="appfoot">ข้อมูลทั้งหมดถูกบันทึกอัตโนมัติไว้ในเบราว์เซอร์นี้ (localStorage) — กด "ส่งออกข้อมูล" เพื่อสำรองเป็นไฟล์ .json หรือย้ายไปใช้เครื่องอื่น</footer>
   `;
 }
 
@@ -297,7 +364,7 @@ function topbarHTML(){
   return `
   <div class="topbar">
     <div class="brand"><span class="k">Food Cost Calculator</span><h1>${esc(state.settings.shopName||'ครัวของหนู')}</h1></div>
-    <div class="savebadge"><span class="dot"></span>บันทึกในหน่วยความจำ</div>
+    <div class="savebadge" id="saveBadge"><span class="dot"></span>บันทึกอัตโนมัติในเครื่องนี้</div>
     <div class="actions">
       <label class="btn btn-secondary btn-sm filepick">นำเข้าข้อมูล
         <input type="file" accept="application/json" onchange="importData(this)" />
@@ -386,6 +453,7 @@ function newRecipe(){
   state.recipes.unshift(r);
   ui.recipeId = r.id;
   render();
+  schedulePersist();
 }
 function openRecipe(id){ ui.recipeId = id; render(); }
 function closeEditor(){ ui.recipeId = null; render(); }
@@ -397,12 +465,14 @@ function duplicateRecipe(id){
   const idx = state.recipes.findIndex(x=>x.id===id);
   state.recipes.splice(idx+1,0,copy);
   render();
+  schedulePersist();
 }
 function deleteRecipe(id){
   if(!confirm('ลบสูตรนี้ทิ้งเลยไหม?')) return;
   state.recipes = state.recipes.filter(r=>r.id!==id);
   if(ui.recipeId===id) ui.recipeId=null;
   render();
+  schedulePersist();
 }
 
 /* ============================== RECIPES: EDITOR ============================== */
@@ -524,12 +594,14 @@ function addIngredient(rid, mode){
   }
   document.getElementById('ingTable_'+rid).innerHTML = ingTableInner(r);
   refreshCalcPanel(rid);
+  schedulePersist();
 }
 function removeIngredient(rid, idx){
   const r = findRecipe(rid);
   r.ingredients.splice(idx,1);
   document.getElementById('ingTable_'+rid).innerHTML = ingTableInner(r);
   refreshCalcPanel(rid);
+  schedulePersist();
 }
 function switchIngMode(rid, idx, mode){
   const r = findRecipe(rid);
@@ -540,6 +612,7 @@ function switchIngMode(rid, idx, mode){
   const rowEl = document.getElementById('ingrow_'+rid+'_'+idx);
   rowEl.outerHTML = ingRowHTML(r, idx);
   refreshCalcPanel(rid);
+  schedulePersist();
 }
 function updIngField(rid, idx, field, value){
   const r = findRecipe(rid);
@@ -548,12 +621,14 @@ function updIngField(rid, idx, field, value){
   const costEl = document.getElementById('ingcost_'+rid+'_'+idx);
   if(costEl) costEl.textContent = num2(ingCost(ing));
   refreshCalcPanel(rid);
+  schedulePersist();
 }
 
 function updRecipeField(id, field, value){
   const r = findRecipe(id);
   r[field] = value;
   refreshCalcPanel(id);
+  schedulePersist();
 }
 
 function refreshCalcPanel(id){
@@ -741,6 +816,7 @@ function savePantryEdit(id, draftKey){
   }
   ui.pantryEditing=null; ui.pantryAdding=false;
   render();
+  schedulePersist();
 }
 function deletePantry(id){
   const used = state.recipes.some(r=>r.ingredients.some(i=>i.mode==='pantry' && i.pantryId===id));
@@ -748,6 +824,7 @@ function deletePantry(id){
   if(!confirm(msg)) return;
   state.pantry = state.pantry.filter(p=>p.id!==id);
   render();
+  schedulePersist();
 }
 
 /* ============================== QUICK CALC ============================== */
@@ -841,7 +918,7 @@ function settingsHTML(){
     <div class="card" style="display:flex;flex-direction:column;gap:12px">
       <div class="notice" style="margin:0">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8c491a" stroke-width="2.75" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 8h.01M12 11v5"></path></svg>
-        <div>แอปนี้เก็บข้อมูลไว้ในหน่วยความจำของแท็บนี้เท่านั้น — ถ้าปิดแท็บหรือรีเฟรชหน้า ข้อมูลจะหายไป กด "ส่งออกข้อมูล" ด้านบนเป็นประจำเพื่อบันทึกเป็นไฟล์ แล้วใช้ "นำเข้าข้อมูล" เพื่อโหลดกลับมาครั้งถัดไป</div>
+        <div>แอปนี้บันทึกข้อมูลอัตโนมัติไว้ใน localStorage ของเบราว์เซอร์นี้ — ข้อมูลจะยังอยู่แม้ปิดแท็บหรือรีเฟรชหน้า แต่ผูกกับเครื่อง/เบราว์เซอร์นี้เท่านั้น กด "ส่งออกข้อมูล" เป็นประจำเพื่อสำรองเป็นไฟล์ แล้วใช้ "นำเข้าข้อมูล" เพื่อย้ายไปเครื่องอื่น</div>
       </div>
       <div style="display:flex;gap:10px;flex-wrap:wrap">
         <button class="btn btn-primary" onclick="exportData()">ส่งออกข้อมูล (.json)</button>
@@ -853,7 +930,7 @@ function settingsHTML(){
   </div>
   `;
 }
-function updSettings(field, value){ state.settings[field] = value; }
+function updSettings(field, value){ state.settings[field] = value; schedulePersist(); }
 function loadDemoData(){
   if(!confirm('โหลดข้อมูลตัวอย่างทับข้อมูลปัจจุบันเลยไหม?')) return;
   state.settings = seedSettings();
@@ -861,6 +938,7 @@ function loadDemoData(){
   state.recipes = seedRecipes(state.pantry);
   ui.recipeId=null;
   render();
+  schedulePersist();
 }
 function clearAllData(){
   if(!confirm('ล้างข้อมูลทั้งหมด (สูตร + คลังวัตถุดิบ) เลยไหม? กู้คืนไม่ได้ถ้าไม่ได้ส่งออกไว้ก่อน')) return;
@@ -868,6 +946,7 @@ function clearAllData(){
   state.recipes = [];
   ui.recipeId=null;
   render();
+  schedulePersist();
 }
 
 /* ============================== IMPORT / EXPORT ============================== */
@@ -894,6 +973,7 @@ function importData(input){
       state.recipes = data.recipes;
       ui.recipeId = null;
       render();
+      schedulePersist();
     } catch(err){
       alert('นำเข้าข้อมูลไม่สำเร็จ: '+err.message);
     }
@@ -903,7 +983,7 @@ function importData(input){
 }
 
 /* ============================== INIT ============================== */
-render();
+bootstrap();
 </script>
 </body>
 </html>
