@@ -38,7 +38,7 @@ Resolution: share ingredients and packaging **by value, not by reference**. At s
 Notes:
 - A single-recipe share is a bundle with one `recipes` entry — same code path as multi-select, no special case.
 - `packaging` is deduped once per bundle; recipes reference it by a bundle-local `key` (not a receiver-side ID), so several selected recipes sharing the same packaging item don't repeat it in the payload.
-- `packagingKey` is omitted/`null` when the recipe uses no packaging.
+- `packagingKey` is omitted/`null` when the recipe uses no packaging. This is a real, common case — a dish served directly (on a plate, no takeaway container) already has "— ไม่ใช้บรรจุภัณฑ์ —" as a first-class option in the app today (`packagingId:''`), and it must round-trip through share/import as cleanly as any other field: no packaging in, no packaging out, no unlinked-packaging banner, no phantom mapping prompt. It is a distinct third state from "has packaging" (`packagingKey` set) and "has packaging but unmapped" (see below) — never conflate "no packaging" with "unmapped packaging."
 - **Excluded fields:** `sellPrice` (a business's live selling price shouldn't silently overwrite the receiver's own pricing — resets to `0` on import) and `note` (currently has no UI anywhere in the app; not worth carrying).
 - `v` is a format version. Import rejects payloads with `v` greater than what this app version understands, with a message asking the user to update the app, rather than silently mis-importing.
 
@@ -65,6 +65,8 @@ r.unlinkedPackaging = { name, unitCost } | null
 ```
 
 `calcRecipe` change: when `packagingId` is empty/null but `unlinkedPackaging` is set, use `unlinkedPackaging.unitCost` as the packaging unit cost. Once mapped or added to the warehouse, `packagingId` is set and `unlinkedPackaging` is cleared — from then on the recipe behaves exactly like any non-imported recipe.
+
+Importing a recipe whose `packagingKey` was `null` (dish served directly, no packaging) must produce `packagingId:'' , unlinkedPackaging:null` — the same shape a locally-created "no packaging" recipe already has. It is not an unlinked/pending state and must not trip `recipeNeedsMapping` below.
 
 **"Needs mapping" check** (drives the badge/banner):
 
