@@ -620,7 +620,12 @@ function updIngField(rid, idx, field, value){
 function updRecipeField(id, field, value){
   const r = findRecipe(id);
   r[field] = value;
-  refreshCalcPanel(id);
+  // targetPct/sellPrice are typed inside the calc panel itself — replacing the
+  // panel's innerHTML on every keystroke would destroy the very input being
+  // typed into, which drops focus and closes the on-screen keyboard on mobile.
+  // Patch just the computed numbers instead and leave both inputs untouched.
+  if(field==='targetPct' || field==='sellPrice') updateCalcOutputs(id);
+  else refreshCalcPanel(id);
   schedulePersist();
 }
 
@@ -631,68 +636,110 @@ function refreshCalcPanel(id){
   panel.innerHTML = calcPanelInner(r);
 }
 
+function updateCalcOutputs(id){
+  const r = findRecipe(id);
+  if(!r) return;
+  const c = calcRecipe(r);
+  const setText = (elId, val) => { const el=document.getElementById(elId); if(el) el.textContent = val; };
+  setText('cp_mat_'+id, baht(c.mat));
+  setText('cp_pack_'+id, baht(c.pack));
+  setText('cp_labor_'+id, baht(c.labor));
+  setText('cp_gas_'+id, baht(c.gas));
+  setText('cp_overhead_'+id, baht(c.overhead));
+  setText('cp_delivery_'+id, baht(Number(r.deliveryCost)||0));
+  setText('cp_perpiece_'+id, num2(c.perPieceFull));
+  setText('cp_fullcost_'+id, num2(c.fullCost));
+  setText('cp_suggest_'+id, num2(c.suggest));
+  setText('cp_revenue_'+id, num2(c.revenue));
+  setText('cp_profit_'+id, num2(c.profit));
+  setText('cp_margin_'+id, `กำไร ${c.margin.toFixed(0)}% ของยอดขาย`);
+
+  const targetInput = document.getElementById('cp_targetInput_'+id);
+  if(targetInput && document.activeElement!==targetInput) targetInput.value = r.targetPct;
+  const sellInput = document.getElementById('cp_sellInput_'+id);
+  if(sellInput && document.activeElement!==sellInput) sellInput.value = r.sellPrice;
+
+  const chipsEl = document.getElementById('cp_chips_'+id);
+  if(chipsEl) chipsEl.innerHTML = pctChipsHTML(r);
+
+  const warnEl = document.getElementById('cp_warn_'+id);
+  if(warnEl) warnEl.innerHTML = warnBoxHTML(c);
+
+  const compareEl = document.getElementById('cp_compare_'+id);
+  if(compareEl) compareEl.innerHTML = compareRowsHTML(c);
+}
+
+function pctChipsHTML(r){
+  return [20,30,40,50,60].map(p=>`<button class="chip ${Number(r.targetPct)===p?'active':''}" onclick="setPct('${r.id}',${p})">${p}%</button>`).join('');
+}
+function warnBoxHTML(c){
+  if(c.profit>=0) return '';
+  return `<div class="warn"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#b2622d" stroke-width="2.75" stroke-linecap="round"><path d="M12 4l9 16H3z"></path><path d="M12 10v4M12 17h.01"></path></svg>
+  <div>ราคาขายต่ำกว่าต้นทุน — ขาดทุน ${num2(Math.abs(c.profit))} บาท/สูตร แนะนำขายที่ ${num2(c.suggest)} บาท</div></div>`;
+}
+function compareRowsHTML(c){
+  return c.compare.map(row=>`
+      <div class="compare-row">
+        <div class="p"><span class="num" style="font-size:15px">${row.price}</span>
+          <span class="tag ${row.status==='ถึงเป้า'?'tag-accent-2':(row.status==='ขาดทุน'?'tag-danger':'tag-neutral')}" style="font-size:10px">${row.status}</span></div>
+        <div style="width:88px;text-align:right;font-size:12.5px;font-weight:600">${num2(row.profit)}</div>
+        <div style="width:44px;text-align:right;font-size:12px;color:var(--color-accent-700)">${row.pct.toFixed(0)}%</div>
+      </div>`).join('');
+}
+
 function calcPanelInner(r){
   const c = calcRecipe(r);
   return `
   <h3 style="font-size:16px;margin-bottom:10px">สรุปต้นทุน</h3>
-  <div class="calc-line"><span>วัตถุดิบ</span><b>${baht(c.mat)}</b></div>
+  <div class="calc-line"><span>วัตถุดิบ</span><b id="cp_mat_${r.id}">${baht(c.mat)}</b></div>
   <hr class="hr">
-  <div class="calc-line"><span>บรรจุภัณฑ์</span><b>${baht(c.pack)}</b></div>
+  <div class="calc-line"><span>บรรจุภัณฑ์</span><b id="cp_pack_${r.id}">${baht(c.pack)}</b></div>
   <hr class="hr">
-  <div class="calc-line"><span>ค่าแรง</span><b>${baht(c.labor)}</b></div>
+  <div class="calc-line"><span>ค่าแรง</span><b id="cp_labor_${r.id}">${baht(c.labor)}</b></div>
   <hr class="hr">
-  <div class="calc-line"><span>ค่าแก๊ส/ไฟ</span><b>${baht(c.gas)}</b></div>
+  <div class="calc-line"><span>ค่าแก๊ส/ไฟ</span><b id="cp_gas_${r.id}">${baht(c.gas)}</b></div>
   <hr class="hr">
-  <div class="calc-line"><span>ค่าโสหุ้ย</span><b>${baht(c.overhead)}</b></div>
+  <div class="calc-line"><span>ค่าโสหุ้ย</span><b id="cp_overhead_${r.id}">${baht(c.overhead)}</b></div>
   <hr class="hr">
-  <div class="calc-line"><span>ค่าส่ง</span><b>${baht(Number(r.deliveryCost)||0)}</b></div>
+  <div class="calc-line"><span>ค่าส่ง</span><b id="cp_delivery_${r.id}">${baht(Number(r.deliveryCost)||0)}</b></div>
 
   <div class="result-tiles">
-    <div class="tile a"><div class="l">ต้นทุนจริง/หน่วย</div><div class="v num">${num2(c.perPieceFull)}</div></div>
-    <div class="tile b"><div class="l">ต้นทุนจริง/สูตร</div><div class="v num">${num2(c.fullCost)}</div></div>
+    <div class="tile a"><div class="l">ต้นทุนจริง/หน่วย</div><div class="v num" id="cp_perpiece_${r.id}">${num2(c.perPieceFull)}</div></div>
+    <div class="tile b"><div class="l">ต้นทุนจริง/สูตร</div><div class="v num" id="cp_fullcost_${r.id}">${num2(c.fullCost)}</div></div>
   </div>
 
   <div class="field" style="margin-bottom:10px">
     <label>อยากได้กำไรกี่ %</label>
     <div style="display:flex;gap:8px;align-items:center">
-      <input class="input" type="number" style="width:90px" value="${r.targetPct}"
+      <input class="input" type="number" style="width:90px" value="${r.targetPct}" id="cp_targetInput_${r.id}"
         oninput="updRecipeField('${r.id}','targetPct',this.value)" />
-      <div class="pctchips">
-        ${[20,30,40,50,60].map(p=>`<button class="chip ${Number(r.targetPct)===p?'active':''}" onclick="setPct('${r.id}',${p})">${p}%</button>`).join('')}
+      <div class="pctchips" id="cp_chips_${r.id}">
+        ${pctChipsHTML(r)}
       </div>
     </div>
   </div>
 
   <div style="background:var(--color-accent-100);border-radius:16px;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
     <div style="font-size:12px;color:var(--color-accent-800)">ราคาแนะนำ / หน่วย</div>
-    <div class="num" style="font-size:24px;color:var(--color-accent-800)">${num2(c.suggest)}</div>
+    <div class="num" id="cp_suggest_${r.id}" style="font-size:24px;color:var(--color-accent-800)">${num2(c.suggest)}</div>
   </div>
 
   <div class="field" style="margin-bottom:8px">
     <label>ราคาที่จะขายจริง (บาท/หน่วย)</label>
-    <input class="input" type="number" step="0.5" value="${r.sellPrice}"
+    <input class="input" type="number" step="0.5" value="${r.sellPrice}" id="cp_sellInput_${r.id}"
       oninput="updRecipeField('${r.id}','sellPrice',this.value)" style="font-family:var(--font-display);font-size:17px;border-color:var(--color-accent)" />
   </div>
   <div class="grid g2" style="margin-bottom:6px">
-    <div class="tile" style="background:var(--color-bg)"><div class="l" style="color:rgba(32,30,29,.55)">ขายได้ทั้งสูตร</div><div class="v num" style="font-size:17px">${num2(c.revenue)}</div></div>
-    <div class="tile" style="background:var(--color-accent-2-100)"><div class="l" style="color:var(--color-accent-2-800)">กำไรจริง</div><div class="v num" style="font-size:17px;color:var(--color-accent-2-800)">${num2(c.profit)}</div></div>
+    <div class="tile" style="background:var(--color-bg)"><div class="l" style="color:rgba(32,30,29,.55)">ขายได้ทั้งสูตร</div><div class="v num" id="cp_revenue_${r.id}" style="font-size:17px">${num2(c.revenue)}</div></div>
+    <div class="tile" style="background:var(--color-accent-2-100)"><div class="l" style="color:var(--color-accent-2-800)">กำไรจริง</div><div class="v num" id="cp_profit_${r.id}" style="font-size:17px;color:var(--color-accent-2-800)">${num2(c.profit)}</div></div>
   </div>
-  <div style="font-size:12px;color:rgba(32,30,29,.7);margin-bottom:6px">กำไร ${c.margin.toFixed(0)}% ของยอดขาย</div>
-  ${c.profit<0 ? `
-  <div class="warn"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#b2622d" stroke-width="2.75" stroke-linecap="round"><path d="M12 4l9 16H3z"></path><path d="M12 10v4M12 17h.01"></path></svg>
-  <div>ราคาขายต่ำกว่าต้นทุน — ขาดทุน ${num2(Math.abs(c.profit))} บาท/สูตร แนะนำขายที่ ${num2(c.suggest)} บาท</div></div>
-  ` : ''}
+  <div style="font-size:12px;color:rgba(32,30,29,.7);margin-bottom:6px" id="cp_margin_${r.id}">กำไร ${c.margin.toFixed(0)}% ของยอดขาย</div>
+  <div id="cp_warn_${r.id}">${warnBoxHTML(c)}</div>
 
   <hr class="hr" style="margin:14px 0">
   <h3 style="font-size:14.5px;margin-bottom:8px">เทียบราคาขาย</h3>
-  <div style="display:flex;flex-direction:column;gap:6px">
-    ${c.compare.map(row=>`
-      <div class="compare-row">
-        <div class="p"><span class="num" style="font-size:15px">${row.price}</span>
-          <span class="tag ${row.status==='ถึงเป้า'?'tag-accent-2':(row.status==='ขาดทุน'?'tag-danger':'tag-neutral')}" style="font-size:10px">${row.status}</span></div>
-        <div style="width:88px;text-align:right;font-size:12.5px;font-weight:600">${num2(row.profit)}</div>
-        <div style="width:44px;text-align:right;font-size:12px;color:var(--color-accent-700)">${row.pct.toFixed(0)}%</div>
-      </div>`).join('')}
+  <div style="display:flex;flex-direction:column;gap:6px" id="cp_compare_${r.id}">
+    ${compareRowsHTML(c)}
   </div>
   `;
 }
