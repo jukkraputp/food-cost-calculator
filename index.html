@@ -122,9 +122,8 @@ main{max-width:1180px;margin:0 auto;padding:26px 22px 90px}
 .editor-head{display:flex;align-items:center;gap:12px;margin-bottom:18px;flex-wrap:wrap}
 .editor-grid{display:grid;grid-template-columns:1.3fr 1fr;gap:20px;align-items:start}
 @media (max-width:860px){.editor-grid{grid-template-columns:1fr}}
-.ing-row{display:grid;grid-template-columns:auto 1fr 90px 90px 90px auto;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--color-divider)}
+.ing-row{display:grid;grid-template-columns:1fr 90px 90px 90px auto;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--color-divider)}
 .ing-row:last-child{border-bottom:0}
-.ing-row select.mode{width:96px}
 @media (max-width:640px){.ing-row{grid-template-columns:1fr;gap:6px;padding:12px 0}}
 .calc-line{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:13px;padding:7px 0}
 .calc-line b{font-size:13.5px}
@@ -168,9 +167,9 @@ footer.appfoot{max-width:1180px;margin:0 auto;padding:10px 22px 50px;font-size:1
 /* ============================== STATE ============================== */
 function uid(p){ return p+'_'+Math.random().toString(36).slice(2,9); }
 
-const FAMILY_LABEL = { mass:'กรัม/กก.', volume:'มล./ลิตร', egg:'ฟอง', piece:'ชิ้น' };
-const FAMILY_BASE = { mass:'กรัม', volume:'มล.', egg:'ฟอง', piece:'ชิ้น' };
-const FAMILY_UNITS = { mass:['กรัม','กก.'], volume:['มล.','ลิตร'], egg:['ฟอง'], piece:['ชิ้น'] };
+const FAMILY_LABEL = { mass:'กรัม/กก.', volume:'มล./ลิตร', egg:'ฟอง', piece:'ชิ้น', packaging:'บรรจุภัณฑ์ (ชิ้น/กล่อง)' };
+const FAMILY_BASE = { mass:'กรัม', volume:'มล.', egg:'ฟอง', piece:'ชิ้น', packaging:'กล่อง' };
+const FAMILY_UNITS = { mass:['กรัม','กก.'], volume:['มล.','ลิตร'], egg:['ฟอง'], piece:['ชิ้น'], packaging:['ชิ้น','กล่อง'] };
 const UNIT_FACTOR = { 'กรัม':1,'กก.':1000,'มล.':1,'ลิตร':1000,'ฟอง':1,'ชิ้น':1 };
 const PANTRY_CATS = ['ของแห้ง/เบเกอรี่','ของสด','นม/ของเหลว','เครื่องปรุง','บรรจุภัณฑ์','อื่นๆ'];
 const RECIPE_CATS = ['ขนม','อาหาร','เครื่องดื่ม','อื่นๆ'];
@@ -291,6 +290,12 @@ function num2(n){ n=Number(n)||0; return n.toLocaleString('en-US',{minimumFracti
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 function pantryUnitCost(p){
+  if(p.family==='packaging'){
+    const piecesPerBox = Number(p.piecesPerBox)||1;
+    const qty = Number(p.buyQty)||0;
+    const boxes = p.buyUnit==='กล่อง' ? qty : (piecesPerBox>0 ? qty/piecesPerBox : 0);
+    return boxes>0 ? (Number(p.buyPrice)||0)/boxes : 0;
+  }
   const f = UNIT_FACTOR[p.buyUnit] || 1;
   const denom = (Number(p.buyQty)||0) * f;
   return denom>0 ? (Number(p.buyPrice)||0)/denom : 0;
@@ -482,19 +487,14 @@ function recipeEditorHTML(id){
   <div class="editor-grid">
     <div style="display:flex;flex-direction:column;gap:16px">
       <div class="card">
-        <div class="grid g2">
-          <div class="field"><label>ชื่อเมนู</label>
-            <input class="input" value="${esc(r.name)}" oninput="updRecipeField('${id}','name',this.value)" /></div>
-          <div class="field"><label>ประเภท</label>
-            <select class="input" onchange="updRecipeField('${id}','category',this.value)">
-              ${RECIPE_CATS.map(c=>`<option ${c===r.category?'selected':''}>${c}</option>`).join('')}
-            </select></div>
-        </div>
+        <div class="field">
+          <label>ชื่อเมนู</label>
+          <input class="input" value="${esc(r.name)}" oninput="updRecipeField('${id}','name',this.value)" /></div>
         <div class="grid g2" style="margin-top:12px">
           <div class="field"><label>ทำได้กี่หน่วยต่อสูตร</label>
             <input class="input" type="number" min="0" step="1" value="${r.yieldQty}"
               oninput="updRecipeField('${id}','yieldQty',this.value)" /></div>
-          <div class="field"><label>หน่วยนับ</label>
+          <div class="field"><label>หน่วย</label>
             <input class="input" value="${esc(r.yieldUnit)}" placeholder="ชิ้น / กล่อง / แก้ว"
               oninput="updRecipeField('${id}','yieldUnit',this.value)" /></div>
         </div>
@@ -504,8 +504,7 @@ function recipeEditorHTML(id){
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
           <h3 style="font-size:16px">วัตถุดิบ (${r.ingredients.length} รายการ)</h3>
           <div style="display:flex;gap:8px">
-            <button class="btn btn-secondary btn-sm" onclick="addIngredient('${id}','pantry')">+ จากคลัง</button>
-            <button class="btn btn-secondary btn-sm" onclick="addIngredient('${id}','custom')">+ กรอกเอง</button>
+            <button class="btn btn-secondary btn-sm" onclick="addIngredient('${id}')">+ เพิ่มวัตถุดิบ</button>
           </div>
         </div>
         <div id="ingTable_${id}">${ingTableInner(r)}</div>
@@ -544,50 +543,28 @@ function recipeEditorHTML(id){
 }
 
 function ingTableInner(r){
-  if(!r.ingredients.length) return `<div class="muted" style="font-size:13px;padding:10px 0">ยังไม่มีวัตถุดิบ — กด "+ จากคลัง" หรือ "+ กรอกเอง" ด้านบน</div>`;
+  if(!r.ingredients.length) return `<div class="muted" style="font-size:13px;padding:10px 0">ยังไม่มีวัตถุดิบ — กด "+ เพิ่มวัตถุดิบ" ด้านบน</div>`;
   return r.ingredients.map((ing,idx)=>ingRowHTML(r,idx)).join('');
 }
 function ingRowHTML(r, idx){
   const ing = r.ingredients[idx];
   const cost = ingCost(ing);
-  const isPantry = ing.mode==='pantry';
   return `<div class="ing-row" id="ingrow_${r.id}_${idx}">
-    <select class="input mode" onchange="switchIngMode('${r.id}',${idx},this.value)">
-      <option value="pantry" ${isPantry?'selected':''}>จากคลัง</option>
-      <option value="custom" ${!isPantry?'selected':''}>กรอกเอง</option>
+    <select class="input" onchange="updIngField('${r.id}',${idx},'pantryId',this.value)">
+      ${state.pantry.map(p=>`<option value="${p.id}" ${p.id===ing.pantryId?'selected':''}>${esc(p.name)}</option>`).join('')}
     </select>
-    ${isPantry ? `
-      <select class="input" onchange="updIngField('${r.id}',${idx},'pantryId',this.value)">
-        ${state.pantry.map(p=>`<option value="${p.id}" ${p.id===ing.pantryId?'selected':''}>${esc(p.name)}</option>`).join('')}
-      </select>
-    ` : `
-      <input class="input" placeholder="ชื่อวัตถุดิบ" value="${esc(ing.name||'')}" oninput="updIngField('${r.id}',${idx},'name',this.value)" />
-    `}
     <input class="input" type="number" min="0" step="1" value="${ing.qty??''}" placeholder="ปริมาณ"
       oninput="updIngField('${r.id}',${idx},'qty',this.value)" />
-    ${isPantry ? `
-      <div class="muted" style="font-size:12px">${esc(ingUnitLabel(ing))}</div>
-    ` : `
-      <input class="input" placeholder="หน่วย" value="${esc(ing.unit||'')}" oninput="updIngField('${r.id}',${idx},'unit',this.value)" />
-    `}
-    ${isPantry ? `
-      <div class="num" id="ingcost_${r.id}_${idx}" style="font-size:14px">${num2(cost)}</div>
-    ` : `
-      <input class="input" type="number" min="0" step="0.01" value="${ing.unitCost??''}" placeholder="บาท/หน่วย"
-        oninput="updIngField('${r.id}',${idx},'unitCost',this.value)" />
-    `}
+    <div class="muted" style="font-size:12px">${esc(ingUnitLabel(ing))}</div>
+    <div class="num" id="ingcost_${r.id}_${idx}" style="font-size:14px">${num2(cost)}</div>
     <button class="btn btn-ghost btn-sm" onclick="removeIngredient('${r.id}',${idx})" title="ลบ">✕</button>
   </div>`;
 }
 
-function addIngredient(rid, mode){
+function addIngredient(rid){
   const r = findRecipe(rid);
-  if(mode==='pantry'){
-    const first = state.pantry[0];
-    r.ingredients.push({id:uid('i'), mode:'pantry', pantryId: first? first.id : null, qty:0});
-  } else {
-    r.ingredients.push({id:uid('i'), mode:'custom', name:'', qty:'', unit:'', unitCost:''});
-  }
+  const first = state.pantry[0];
+  r.ingredients.push({id:uid('i'), mode:'pantry', pantryId: first? first.id : null, qty:0});
   document.getElementById('ingTable_'+rid).innerHTML = ingTableInner(r);
   refreshCalcPanel(rid);
   schedulePersist();
@@ -596,18 +573,6 @@ function removeIngredient(rid, idx){
   const r = findRecipe(rid);
   r.ingredients.splice(idx,1);
   document.getElementById('ingTable_'+rid).innerHTML = ingTableInner(r);
-  refreshCalcPanel(rid);
-  schedulePersist();
-}
-function switchIngMode(rid, idx, mode){
-  const r = findRecipe(rid);
-  const ing = r.ingredients[idx];
-  const priorName = ingName(ing);
-  ing.mode = mode;
-  if(mode==='pantry'){ ing.pantryId = state.pantry[0]? state.pantry[0].id : null; }
-  else { ing.name = (priorName==='(ถูกลบจากคลัง)'||priorName==='(ไม่มีชื่อ)')? '' : priorName; ing.unit=''; ing.unitCost=''; }
-  const rowEl = document.getElementById('ingrow_'+rid+'_'+idx);
-  rowEl.outerHTML = ingRowHTML(r, idx);
   refreshCalcPanel(rid);
   schedulePersist();
 }
@@ -747,9 +712,15 @@ function pantryRowView(p){
   </div>`;
 }
 function pantryEditPanel(id){
-  const p = id ? findPantry(id) : {id:null, name:'', category:PANTRY_CATS[0], family:'mass', buyPrice:0, buyQty:0, buyUnit:'กรัม'};
+  const p = id ? findPantry(id) : {id:null, name:'', category:PANTRY_CATS[0], family:'mass', buyPrice:0, buyQty:0, buyUnit:'กรัม', piecesPerBox:1};
   const draftKey = id || 'new';
-  return `<div class="edit-panel" id="pantryEdit_${draftKey}">
+  return `<div class="edit-panel" id="pantryEdit_${draftKey}" data-pid="${id||''}">
+    ${pantryEditPanelFields(p, draftKey)}
+  </div>`;
+}
+function pantryEditPanelFields(p, draftKey){
+  const isPackaging = p.family==='packaging';
+  return `
     <div class="grid g2">
       <div class="field"><label>ชื่อวัตถุดิบ</label>
         <input class="input" id="pf_name_${draftKey}" value="${esc(p.name)}" placeholder="เช่น เนยเค็ม" /></div>
@@ -771,30 +742,52 @@ function pantryEditPanel(id){
           </select>
         </div></div>
     </div>
+    ${isPackaging ? `
+    <div class="grid g3">
+      <div class="field"><label>กี่ชิ้นต่อกล่อง</label>
+        <input class="input" type="number" min="1" step="1" id="pf_ppb_${draftKey}" value="${p.piecesPerBox||1}" oninput="refreshPantryPreview('${draftKey}')" /></div>
+    </div>
+    ` : ''}
     <div style="background:var(--color-bg);border-radius:14px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center">
       <span style="font-size:12px;color:rgba(32,30,29,.65)">คิดเป็น</span>
       <span class="num" id="pf_preview_${draftKey}" style="font-size:16px">${pantryUnitCost(p).toFixed(2)} บาท / ${pantryBaseLabel(p)}</span>
     </div>
     <div style="display:flex;gap:8px;justify-content:flex-end">
       <button class="btn btn-secondary btn-sm" onclick="cancelPantryEdit()">ยกเลิก</button>
-      <button class="btn btn-primary btn-sm" onclick="savePantryEdit('${id||''}','${draftKey}')">บันทึก</button>
+      <button class="btn btn-primary btn-sm" onclick="savePantryEdit('${p.id||''}','${draftKey}')">บันทึก</button>
     </div>
-  </div>`;
+  `;
 }
 function refreshPantryUnitChoices(draftKey){
   const family = document.getElementById('pf_family_'+draftKey).value;
-  const unitSel = document.getElementById('pf_unit_'+draftKey);
-  unitSel.innerHTML = FAMILY_UNITS[family].map(u=>`<option>${u}</option>`).join('');
-  refreshPantryPreview(draftKey);
+  const draft = {
+    id: document.getElementById('pantryEdit_'+draftKey).dataset.pid || null,
+    name: document.getElementById('pf_name_'+draftKey).value,
+    category: document.getElementById('pf_cat_'+draftKey).value,
+    family: family,
+    buyPrice: Number(document.getElementById('pf_price_'+draftKey).value)||0,
+    buyQty: Number(document.getElementById('pf_qty_'+draftKey).value)||0,
+    buyUnit: FAMILY_UNITS[family][0],
+    piecesPerBox: 1,
+  };
+  document.getElementById('pantryEdit_'+draftKey).innerHTML = pantryEditPanelFields(draft, draftKey);
 }
 function refreshPantryPreview(draftKey){
   const family = document.getElementById('pf_family_'+draftKey).value;
   const price = Number(document.getElementById('pf_price_'+draftKey).value)||0;
   const qty = Number(document.getElementById('pf_qty_'+draftKey).value)||0;
   const unit = document.getElementById('pf_unit_'+draftKey).value;
-  const factor = UNIT_FACTOR[unit]||1;
-  const denom = qty*factor;
-  const uc = denom>0 ? price/denom : 0;
+  let uc;
+  if(family==='packaging'){
+    const ppbEl = document.getElementById('pf_ppb_'+draftKey);
+    const piecesPerBox = ppbEl ? (Number(ppbEl.value)||1) : 1;
+    const boxes = unit==='กล่อง' ? qty : (piecesPerBox>0 ? qty/piecesPerBox : 0);
+    uc = boxes>0 ? price/boxes : 0;
+  } else {
+    const factor = UNIT_FACTOR[unit]||1;
+    const denom = qty*factor;
+    uc = denom>0 ? price/denom : 0;
+  }
   document.getElementById('pf_preview_'+draftKey).textContent = uc.toFixed(2)+' บาท / '+FAMILY_BASE[family];
 }
 function cancelPantryEdit(){ ui.pantryEditing=null; ui.pantryAdding=false; render(); }
@@ -805,11 +798,16 @@ function savePantryEdit(id, draftKey){
   const buyPrice = Number(document.getElementById('pf_price_'+draftKey).value)||0;
   const buyQty = Number(document.getElementById('pf_qty_'+draftKey).value)||0;
   const buyUnit = document.getElementById('pf_unit_'+draftKey).value;
+  const ppbEl = document.getElementById('pf_ppb_'+draftKey);
+  const piecesPerBox = ppbEl ? (Number(ppbEl.value)||1) : undefined;
   if(id){
     const p = findPantry(id);
     Object.assign(p, {name,category,family,buyPrice,buyQty,buyUnit});
+    if(family==='packaging') p.piecesPerBox = piecesPerBox; else delete p.piecesPerBox;
   } else {
-    state.pantry.push({id:uid('p'), name,category,family,buyPrice,buyQty,buyUnit});
+    const item = {id:uid('p'), name,category,family,buyPrice,buyQty,buyUnit};
+    if(family==='packaging') item.piecesPerBox = piecesPerBox;
+    state.pantry.push(item);
   }
   ui.pantryEditing=null; ui.pantryAdding=false;
   render();
