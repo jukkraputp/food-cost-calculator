@@ -144,6 +144,12 @@ main{max-width:1180px;margin:0 auto;padding:26px 22px 90px}
 .warn svg{flex:none;margin-top:1px}
 
 /* pantry */
+.packaging-row{display:grid;grid-template-columns:1fr 110px 110px auto;gap:10px;align-items:center;
+  background:var(--color-surface-2);border-radius:16px;padding:10px 14px;margin-bottom:8px}
+@media (max-width:700px){.packaging-row{grid-template-columns:1fr;gap:6px}}
+.packaging-row .name{font-weight:600;font-size:14px}
+.packaging-row .meta{font-size:11.5px;color:rgba(32,30,29,.55);margin-top:2px}
+.packaging-row .cost{text-align:right}
 .pantry-row{display:grid;grid-template-columns:1fr 130px 90px auto;gap:10px;align-items:center;
   background:var(--color-surface-2);border-radius:16px;padding:11px 15px;margin-bottom:8px}
 @media (max-width:700px){.pantry-row{grid-template-columns:1fr;gap:6px}}
@@ -167,14 +173,18 @@ footer.appfoot{max-width:1180px;margin:0 auto;padding:10px 22px 50px;font-size:1
 /* ============================== STATE ============================== */
 function uid(p){ return p+'_'+Math.random().toString(36).slice(2,9); }
 
-const FAMILY_LABEL = { mass:'กรัม/กก.', volume:'มล./ลิตร', egg:'ฟอง', piece:'ชิ้น', packaging:'บรรจุภัณฑ์ (ชิ้น/กล่อง)' };
-const FAMILY_BASE = { mass:'กรัม', volume:'มล.', egg:'ฟอง', piece:'ชิ้น', packaging:'กล่อง' };
-const FAMILY_UNITS = { mass:['กรัม','กก.'], volume:['มล.','ลิตร'], egg:['ฟอง'], piece:['ชิ้น'], packaging:['ชิ้น','กล่อง'] };
+const FAMILY_LABEL = { mass:'กรัม/กก.', volume:'มล./ลิตร', egg:'ฟอง', piece:'ชิ้น' };
+const FAMILY_BASE = { mass:'กรัม', volume:'มล.', egg:'ฟอง', piece:'ชิ้น' };
+const FAMILY_UNITS = { mass:['กรัม','กก.'], volume:['มล.','ลิตร'], egg:['ฟอง'], piece:['ชิ้น'] };
 const UNIT_FACTOR = { 'กรัม':1,'กก.':1000,'มล.':1,'ลิตร':1000,'ฟอง':1,'ชิ้น':1 };
-const PANTRY_CATS = ['ของแห้ง/เบเกอรี่','ของสด','นม/ของเหลว','เครื่องปรุง','บรรจุภัณฑ์','อื่นๆ'];
+const PANTRY_CATS = ['ของแห้ง/เบเกอรี่','ของสด','นม/ของเหลว','เครื่องปรุง','อื่นๆ'];
 const RECIPE_CATS = ['ขนม','อาหาร','เครื่องดื่ม','อื่นๆ'];
 
 function seedPantry(){
+  return [];
+}
+
+function seedPackaging(){
   return [];
 }
 
@@ -183,7 +193,7 @@ function seedRecipes(pantry){
 }
 
 function seedSettings(){
-  return { shopName:'ครัวของหนู', defaultPackaging:1.35, defaultLabor:60, defaultOverhead:20, defaultTarget:40 };
+  return { shopName:'ครัวของหนู', defaultLabor:60, defaultOverhead:20, defaultTarget:40 };
 }
 
 /* ============================== DATA CLIENT ==============================
@@ -216,18 +226,24 @@ const api = {
   // a real API could instead expose POST/PATCH/DELETE per item)
   async savePantry(pantry){ localSet('pantry', pantry); return pantry; },
 
+  // GET /packaging
+  async listPackaging(){ return localGet('packaging', null); },
+  // PUT /packaging
+  async savePackaging(packaging){ localSet('packaging', packaging); return packaging; },
+
   // GET /recipes
   async listRecipes(){ return localGet('recipes', null); },
   // PUT /recipes
   async saveRecipes(recipes){ localSet('recipes', recipes); return recipes; },
 
   // DELETE /data  (reset everything)
-  async clearAll(){ localRemove('settings'); localRemove('pantry'); localRemove('recipes'); },
+  async clearAll(){ localRemove('settings'); localRemove('pantry'); localRemove('packaging'); localRemove('recipes'); },
 };
 
-let state = { settings: null, pantry: [], recipes: [] };
+let state = { settings: null, pantry: [], packaging: [], recipes: [] };
 
 let ui = { tab:'recipes', recipeId:null, search:'', pantrySearch:'', pantryEditing:null, pantryAdding:false,
+  packagingSearch:'', packagingEditing:null, packagingAdding:false,
   quick:{ mat:100, pack:10, labor:30, gas:10, delivery:0, overhead:15, yieldQty:10, target:35, sell:0 } };
 
 /* ============================== PERSISTENCE ============================== */
@@ -241,6 +257,7 @@ async function persistAll(){
     await Promise.all([
       api.saveSettings(state.settings),
       api.savePantry(state.pantry),
+      api.savePackaging(state.packaging),
       api.saveRecipes(state.recipes),
     ]);
     saveStatus = 'saved';
@@ -270,12 +287,15 @@ function updateSaveBadge(){
 
 async function bootstrap(){
   app.innerHTML = `<div style="padding:60px 20px;text-align:center;color:rgba(32,30,29,.55)">กำลังโหลดข้อมูล...</div>`;
-  const [settings, pantry, recipes] = await Promise.all([api.getSettings(), api.listPantry(), api.listRecipes()]);
+  const [settings, pantry, packaging, recipes] = await Promise.all([api.getSettings(), api.listPantry(), api.listPackaging(), api.listRecipes()]);
   if(settings && pantry && recipes){
-    state = {settings, pantry, recipes};
+    // packaging is a newer collection — default it without discarding existing data
+    state = {settings, pantry, packaging: packaging || seedPackaging(), recipes};
+    if(!packaging) await persistAll();
   } else {
     state.settings = seedSettings();
     state.pantry = seedPantry();
+    state.packaging = seedPackaging();
     state.recipes = seedRecipes(state.pantry);
     await persistAll();
   }
@@ -285,22 +305,26 @@ async function bootstrap(){
 /* ============================== HELPERS ============================== */
 function findRecipe(id){ return state.recipes.find(r=>r.id===id); }
 function findPantry(id){ return state.pantry.find(p=>p.id===id); }
+function findPackaging(id){ return state.packaging.find(p=>p.id===id); }
 function baht(n){ n = Number(n)||0; return n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+' บาท'; }
 function num2(n){ n=Number(n)||0; return n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 function pantryUnitCost(p){
-  if(p.family==='packaging'){
-    const piecesPerBox = Number(p.piecesPerBox)||1;
-    const qty = Number(p.buyQty)||0;
-    const boxes = p.buyUnit==='กล่อง' ? qty : (piecesPerBox>0 ? qty/piecesPerBox : 0);
-    return boxes>0 ? (Number(p.buyPrice)||0)/boxes : 0;
-  }
   const f = UNIT_FACTOR[p.buyUnit] || 1;
   const denom = (Number(p.buyQty)||0) * f;
   return denom>0 ? (Number(p.buyPrice)||0)/denom : 0;
 }
 function pantryBaseLabel(p){ return FAMILY_BASE[p.family] || ''; }
+
+/* cost per piece — a box's price spread over the pieces it contains */
+function packagingUnitCost(p){
+  const piecesPerBox = Number(p.piecesPerBox)||1;
+  const qty = Number(p.buyQty)||0;
+  const pieces = p.buyUnit==='กล่อง' ? qty*piecesPerBox : qty;
+  return pieces>0 ? (Number(p.buyPrice)||0)/pieces : 0;
+}
+function packagingBoxCost(p){ return packagingUnitCost(p) * (Number(p.piecesPerBox)||1); }
 
 function ingUnitCost(ing){
   if(ing.mode==='pantry'){ const p=findPantry(ing.pantryId); return p? pantryUnitCost(p):0; }
@@ -319,12 +343,15 @@ function ingCost(ing){ return (Number(ing.qty)||0) * ingUnitCost(ing); }
 function calcRecipe(r){
   const mat = r.ingredients.reduce((s,i)=>s+ingCost(i),0);
   const yieldQty = Number(r.yieldQty)||0;
-  const pack = (Number(r.packagingCost)||0) * yieldQty;
+  const pkg = r.packagingId ? findPackaging(r.packagingId) : null;
+  const packUnitCost = pkg ? packagingUnitCost(pkg) : 0;
+  const pack = packUnitCost * yieldQty;
   const costBasic = mat+pack;
   const perPieceBasic = yieldQty? costBasic/yieldQty : 0;
   const labor = (Number(r.laborRate)||0)*(Number(r.laborHours)||0);
   const overhead = costBasic*((Number(r.overheadPct)||0)/100);
-  const fullCost = costBasic+labor+(Number(r.gasCost)||0)+overhead+(Number(r.deliveryCost)||0);
+  const gas = costBasic*((Number(r.gasPct)||0)/100);
+  const fullCost = costBasic+labor+gas+overhead+(Number(r.deliveryCost)||0);
   const perPieceFull = yieldQty? fullCost/yieldQty : 0;
   const suggestRaw = perPieceFull*(1+(Number(r.targetPct)||0)/100);
   const suggest = Math.ceil(suggestRaw*2)/2;
@@ -344,7 +371,7 @@ function calcRecipe(r){
     let status = pf<=0 ? 'ขาดทุน' : (pctOfRev/100>=target ? 'ถึงเป้า' : 'ต่ำกว่าเป้า');
     return {price:p, profit:pf, pct:pctOfRev, status};
   });
-  return {mat,pack,costBasic,perPieceBasic,labor,overhead,fullCost,perPieceFull,suggestRaw,suggest,
+  return {mat,pack,costBasic,perPieceBasic,labor,overhead,gas,fullCost,perPieceFull,suggestRaw,suggest,
     revenue,profit,margin,profitBasic,marginBasic,compare,yieldQty};
 }
 
@@ -379,13 +406,14 @@ function tabIcon(name){
   const icons = {
     recipes:'<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h9a3 3 0 013 3v11a2 2 0 00-2-2H4z"></path><path d="M20 5v12"></path></svg>',
     pantry:'<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><circle cx="12" cy="13" r="7"></circle><path d="M12 6V3"></path></svg>',
+    packaging:'<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5 9 5 9-5z"></path><path d="M3 8v8l9 5 9-5V8"></path><path d="M12 13v8"></path></svg>',
     calc:'<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><rect x="4" y="3" width="16" height="18" rx="4"></rect><path d="M8 8h8M8 13h3M8 17h3M15 13v4"></path></svg>',
     settings:'<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><circle cx="12" cy="12" r="3.2"></circle><path d="M12 3v2M12 19v2M4.5 7.5l1.7 1M17.8 15.5l1.7 1M4.5 16.5l1.7-1M17.8 8.5l1.7-1"></path></svg>',
   };
   return icons[name]||'';
 }
 function tabsHTML(){
-  const tabs = [['recipes','สูตรอาหาร'],['pantry','คลังวัตถุดิบ'],['calc','คำนวณเร็ว'],['settings','ตั้งค่า']];
+  const tabs = [['recipes','สูตรอาหาร'],['pantry','คลังวัตถุดิบ'],['packaging','คลังบรรจุภัณฑ์'],['calc','คำนวณเร็ว'],['settings','ตั้งค่า']];
   return `<div class="tabs">${tabs.map(([k,l])=>`
     <button class="tab-btn ${ui.tab===k?'active':''}" onclick="setTab('${k}')">${tabIcon(k)}${l}</button>
   `).join('')}</div>`;
@@ -396,6 +424,7 @@ function setTab(t){ ui.tab=t; if(t!=='recipes') ui.recipeId=null; render(); }
 function viewHTML(){
   if(ui.tab==='recipes') return ui.recipeId ? recipeEditorHTML(ui.recipeId) : recipesListHTML();
   if(ui.tab==='pantry') return pantryHTML();
+  if(ui.tab==='packaging') return packagingHTML();
   if(ui.tab==='calc') return quickCalcHTML();
   if(ui.tab==='settings') return settingsHTML();
   return '';
@@ -448,8 +477,8 @@ function recipeGridInner(list){
 
 function newRecipe(){
   const r = { id:uid('r'), name:'สูตรใหม่', category:'ขนม', yieldQty:10, yieldUnit:'ชิ้น', ingredients:[],
-    packagingCost:state.settings.defaultPackaging, laborRate:state.settings.defaultLabor, laborHours:1,
-    gasCost:10, deliveryCost:0, overheadPct:state.settings.defaultOverhead, targetPct:state.settings.defaultTarget,
+    packagingId:'', laborRate:state.settings.defaultLabor, laborHours:1,
+    gasPct:5, deliveryCost:0, overheadPct:state.settings.defaultOverhead, targetPct:state.settings.defaultTarget,
     sellPrice:0, note:'' };
   state.recipes.unshift(r);
   ui.recipeId = r.id;
@@ -513,12 +542,14 @@ function recipeEditorHTML(id){
       <div class="card">
         <h3 style="font-size:16px;margin-bottom:8px">ต้นทุนอื่น</h3>
         <div class="grid g2">
-          <div class="field"><label>ค่าบรรจุภัณฑ์ (บาท/หน่วย)</label>
-            <input class="input" type="number" min="0" step="0.05" value="${r.packagingCost}"
-              oninput="updRecipeField('${id}','packagingCost',this.value)" /></div>
-          <div class="field"><label>ค่าแก๊ส/ไฟ ต่อสูตร (บาท)</label>
-            <input class="input" type="number" min="0" step="1" value="${r.gasCost}"
-              oninput="updRecipeField('${id}','gasCost',this.value)" /></div>
+          <div class="field"><label>บรรจุภัณฑ์ที่ใช้</label>
+            <select class="input" onchange="updRecipeField('${id}','packagingId',this.value)">
+              <option value="">— ไม่ใช้บรรจุภัณฑ์ —</option>
+              ${state.packaging.map(p=>`<option value="${p.id}" ${p.id===r.packagingId?'selected':''}>${esc(p.name)} (${packagingUnitCost(p).toFixed(2)} บาท/ชิ้น)</option>`).join('')}
+            </select></div>
+          <div class="field"><label>ค่าแก๊ส/ไฟ (% ของวัตถุดิบ+บรรจุภัณฑ์)</label>
+            <input class="input" type="number" min="0" step="1" value="${r.gasPct}"
+              oninput="updRecipeField('${id}','gasPct',this.value)" /></div>
           <div class="field"><label>ค่าแรง (บาท/ชม.)</label>
             <input class="input" type="number" min="0" step="5" value="${r.laborRate}"
               oninput="updRecipeField('${id}','laborRate',this.value)" /></div>
@@ -610,7 +641,7 @@ function calcPanelInner(r){
   <hr class="hr">
   <div class="calc-line"><span>ค่าแรง</span><b>${baht(c.labor)}</b></div>
   <hr class="hr">
-  <div class="calc-line"><span>ค่าแก๊ส/ไฟ</span><b>${baht(Number(r.gasCost)||0)}</b></div>
+  <div class="calc-line"><span>ค่าแก๊ส/ไฟ</span><b>${baht(c.gas)}</b></div>
   <hr class="hr">
   <div class="calc-line"><span>ค่าโสหุ้ย</span><b>${baht(c.overhead)}</b></div>
   <hr class="hr">
@@ -712,14 +743,13 @@ function pantryRowView(p){
   </div>`;
 }
 function pantryEditPanel(id){
-  const p = id ? findPantry(id) : {id:null, name:'', category:PANTRY_CATS[0], family:'mass', buyPrice:0, buyQty:0, buyUnit:'กรัม', piecesPerBox:1};
+  const p = id ? findPantry(id) : {id:null, name:'', category:PANTRY_CATS[0], family:'mass', buyPrice:0, buyQty:0, buyUnit:'กรัม'};
   const draftKey = id || 'new';
   return `<div class="edit-panel" id="pantryEdit_${draftKey}" data-pid="${id||''}">
     ${pantryEditPanelFields(p, draftKey)}
   </div>`;
 }
 function pantryEditPanelFields(p, draftKey){
-  const isPackaging = p.family==='packaging';
   return `
     <div class="grid g2">
       <div class="field"><label>ชื่อวัตถุดิบ</label>
@@ -742,12 +772,6 @@ function pantryEditPanelFields(p, draftKey){
           </select>
         </div></div>
     </div>
-    ${isPackaging ? `
-    <div class="grid g3">
-      <div class="field"><label>กี่ชิ้นต่อกล่อง</label>
-        <input class="input" type="number" min="1" step="1" id="pf_ppb_${draftKey}" value="${p.piecesPerBox||1}" oninput="refreshPantryPreview('${draftKey}')" /></div>
-    </div>
-    ` : ''}
     <div style="background:var(--color-bg);border-radius:14px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center">
       <span style="font-size:12px;color:rgba(32,30,29,.65)">คิดเป็น</span>
       <span class="num" id="pf_preview_${draftKey}" style="font-size:16px">${pantryUnitCost(p).toFixed(2)} บาท / ${pantryBaseLabel(p)}</span>
@@ -768,7 +792,6 @@ function refreshPantryUnitChoices(draftKey){
     buyPrice: Number(document.getElementById('pf_price_'+draftKey).value)||0,
     buyQty: Number(document.getElementById('pf_qty_'+draftKey).value)||0,
     buyUnit: FAMILY_UNITS[family][0],
-    piecesPerBox: 1,
   };
   document.getElementById('pantryEdit_'+draftKey).innerHTML = pantryEditPanelFields(draft, draftKey);
 }
@@ -777,17 +800,9 @@ function refreshPantryPreview(draftKey){
   const price = Number(document.getElementById('pf_price_'+draftKey).value)||0;
   const qty = Number(document.getElementById('pf_qty_'+draftKey).value)||0;
   const unit = document.getElementById('pf_unit_'+draftKey).value;
-  let uc;
-  if(family==='packaging'){
-    const ppbEl = document.getElementById('pf_ppb_'+draftKey);
-    const piecesPerBox = ppbEl ? (Number(ppbEl.value)||1) : 1;
-    const boxes = unit==='กล่อง' ? qty : (piecesPerBox>0 ? qty/piecesPerBox : 0);
-    uc = boxes>0 ? price/boxes : 0;
-  } else {
-    const factor = UNIT_FACTOR[unit]||1;
-    const denom = qty*factor;
-    uc = denom>0 ? price/denom : 0;
-  }
+  const factor = UNIT_FACTOR[unit]||1;
+  const denom = qty*factor;
+  const uc = denom>0 ? price/denom : 0;
   document.getElementById('pf_preview_'+draftKey).textContent = uc.toFixed(2)+' บาท / '+FAMILY_BASE[family];
 }
 function cancelPantryEdit(){ ui.pantryEditing=null; ui.pantryAdding=false; render(); }
@@ -798,16 +813,11 @@ function savePantryEdit(id, draftKey){
   const buyPrice = Number(document.getElementById('pf_price_'+draftKey).value)||0;
   const buyQty = Number(document.getElementById('pf_qty_'+draftKey).value)||0;
   const buyUnit = document.getElementById('pf_unit_'+draftKey).value;
-  const ppbEl = document.getElementById('pf_ppb_'+draftKey);
-  const piecesPerBox = ppbEl ? (Number(ppbEl.value)||1) : undefined;
   if(id){
     const p = findPantry(id);
     Object.assign(p, {name,category,family,buyPrice,buyQty,buyUnit});
-    if(family==='packaging') p.piecesPerBox = piecesPerBox; else delete p.piecesPerBox;
   } else {
-    const item = {id:uid('p'), name,category,family,buyPrice,buyQty,buyUnit};
-    if(family==='packaging') item.piecesPerBox = piecesPerBox;
-    state.pantry.push(item);
+    state.pantry.push({id:uid('p'), name,category,family,buyPrice,buyQty,buyUnit});
   }
   ui.pantryEditing=null; ui.pantryAdding=false;
   render();
@@ -818,6 +828,108 @@ function deletePantry(id){
   const msg = used ? 'วัตถุดิบนี้ถูกใช้อยู่ในบางสูตร ลบแล้วสูตรนั้นจะคิดต้นทุนส่วนนี้เป็น 0 — ลบเลยไหม?' : 'ลบวัตถุดิบนี้ออกจากคลังไหม?';
   if(!confirm(msg)) return;
   state.pantry = state.pantry.filter(p=>p.id!==id);
+  render();
+  schedulePersist();
+}
+
+/* ============================== PACKAGING ============================== */
+function packagingHTML(){
+  const q = ui.packagingSearch.trim().toLowerCase();
+  const filtered = state.packaging.filter(p=> !q || p.name.toLowerCase().includes(q));
+
+  let rows = '';
+  if(ui.packagingAdding){ rows += packagingEditPanel(null); }
+  filtered.forEach(p=>{
+    if(ui.packagingEditing===p.id){ rows += packagingEditPanel(p.id); }
+    else { rows += packagingRowView(p); }
+  });
+  if(!filtered.length && !ui.packagingAdding) rows += `<div class="muted" style="padding:20px 0">ไม่พบบรรจุภัณฑ์ที่ค้นหา</div>`;
+
+  return `
+  <div class="toolbar">
+    <input class="input" placeholder="ค้นหา เช่น แก้ว, กล่อง" value="${esc(ui.packagingSearch)}"
+      oninput="ui.packagingSearch=this.value; renderPackagingList()" />
+    <span class="tag tag-neutral">ทั้งหมด ${state.packaging.length}</span>
+    <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="ui.packagingAdding=true; ui.packagingEditing=null; render()">+ เพิ่มบรรจุภัณฑ์</button>
+  </div>
+  <div id="packagingList">${rows}</div>
+  `;
+}
+function renderPackagingList(){
+  document.querySelector('main').innerHTML = packagingHTML();
+}
+function packagingRowView(p){
+  return `<div class="packaging-row">
+    <div><div class="name">${esc(p.name)}</div><div class="meta">${num2(p.buyPrice)} บาท / ${p.buyQty} ${esc(p.buyUnit)} (${p.piecesPerBox||1} ชิ้น/กล่อง)</div></div>
+    <div class="cost"><div class="num" style="font-size:15px">${packagingUnitCost(p).toFixed(2)}</div><div class="meta">บาท/ชิ้น</div></div>
+    <div class="cost"><div class="num" style="font-size:15px">${packagingBoxCost(p).toFixed(2)}</div><div class="meta">บาท/กล่อง</div></div>
+    <div style="display:flex;gap:6px">
+      <button class="btn btn-secondary btn-sm" onclick="ui.packagingEditing='${p.id}'; ui.packagingAdding=false; render()">แก้ไข</button>
+      <button class="btn btn-danger btn-sm" onclick="deletePackaging('${p.id}')">ลบ</button>
+    </div>
+  </div>`;
+}
+function packagingEditPanel(id){
+  const p = id ? findPackaging(id) : {id:null, name:'', buyPrice:0, buyQty:0, buyUnit:'ชิ้น', piecesPerBox:1};
+  const draftKey = id || 'new';
+  return `<div class="edit-panel" id="packagingEdit_${draftKey}">
+    <div class="field"><label>ชื่อบรรจุภัณฑ์</label>
+      <input class="input" id="pkf_name_${draftKey}" value="${esc(p.name)}" placeholder="เช่น แก้วกาแฟ, กล่องเบเกอรี่" /></div>
+    <div class="grid g3">
+      <div class="field"><label>ซื้อมาราคา (บาท)</label>
+        <input class="input" type="number" min="0" step="1" id="pkf_price_${draftKey}" value="${p.buyPrice}" oninput="refreshPackagingPreview('${draftKey}')" /></div>
+      <div class="field"><label>ได้ปริมาณ</label>
+        <div style="display:flex;gap:6px">
+          <input class="input" type="number" min="0" step="1" id="pkf_qty_${draftKey}" value="${p.buyQty}" oninput="refreshPackagingPreview('${draftKey}')" />
+          <select class="input" id="pkf_unit_${draftKey}" style="width:90px" onchange="refreshPackagingPreview('${draftKey}')">
+            <option value="ชิ้น" ${p.buyUnit==='ชิ้น'?'selected':''}>ชิ้น</option>
+            <option value="กล่อง" ${p.buyUnit==='กล่อง'?'selected':''}>กล่อง</option>
+          </select>
+        </div></div>
+      <div class="field"><label>กี่ชิ้นต่อกล่อง</label>
+        <input class="input" type="number" min="1" step="1" id="pkf_ppb_${draftKey}" value="${p.piecesPerBox||1}" oninput="refreshPackagingPreview('${draftKey}')" /></div>
+    </div>
+    <div style="background:var(--color-bg);border-radius:14px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center">
+      <span style="font-size:12px;color:rgba(32,30,29,.65)">คิดเป็น</span>
+      <span class="num" id="pkf_preview_${draftKey}" style="font-size:16px">${packagingUnitCost(p).toFixed(2)} บาท/ชิ้น · ${packagingBoxCost(p).toFixed(2)} บาท/กล่อง</span>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn btn-secondary btn-sm" onclick="cancelPackagingEdit()">ยกเลิก</button>
+      <button class="btn btn-primary btn-sm" onclick="savePackagingEdit('${id||''}','${draftKey}')">บันทึก</button>
+    </div>
+  </div>`;
+}
+function refreshPackagingPreview(draftKey){
+  const price = Number(document.getElementById('pkf_price_'+draftKey).value)||0;
+  const qty = Number(document.getElementById('pkf_qty_'+draftKey).value)||0;
+  const unit = document.getElementById('pkf_unit_'+draftKey).value;
+  const piecesPerBox = Number(document.getElementById('pkf_ppb_'+draftKey).value)||1;
+  const draft = {buyPrice:price, buyQty:qty, buyUnit:unit, piecesPerBox};
+  document.getElementById('pkf_preview_'+draftKey).textContent =
+    packagingUnitCost(draft).toFixed(2)+' บาท/ชิ้น · '+packagingBoxCost(draft).toFixed(2)+' บาท/กล่อง';
+}
+function cancelPackagingEdit(){ ui.packagingEditing=null; ui.packagingAdding=false; render(); }
+function savePackagingEdit(id, draftKey){
+  const name = document.getElementById('pkf_name_'+draftKey).value.trim() || 'บรรจุภัณฑ์ใหม่';
+  const buyPrice = Number(document.getElementById('pkf_price_'+draftKey).value)||0;
+  const buyQty = Number(document.getElementById('pkf_qty_'+draftKey).value)||0;
+  const buyUnit = document.getElementById('pkf_unit_'+draftKey).value;
+  const piecesPerBox = Number(document.getElementById('pkf_ppb_'+draftKey).value)||1;
+  if(id){
+    const p = findPackaging(id);
+    Object.assign(p, {name,buyPrice,buyQty,buyUnit,piecesPerBox});
+  } else {
+    state.packaging.push({id:uid('pk'), name,buyPrice,buyQty,buyUnit,piecesPerBox});
+  }
+  ui.packagingEditing=null; ui.packagingAdding=false;
+  render();
+  schedulePersist();
+}
+function deletePackaging(id){
+  const used = state.recipes.some(r=>r.packagingId===id);
+  const msg = used ? 'บรรจุภัณฑ์นี้ถูกใช้อยู่ในบางสูตร ลบแล้วสูตรนั้นจะคิดค่าบรรจุภัณฑ์เป็น 0 — ลบเลยไหม?' : 'ลบบรรจุภัณฑ์นี้ออกจากคลังไหม?';
+  if(!confirm(msg)) return;
+  state.packaging = state.packaging.filter(p=>p.id!==id);
   render();
   schedulePersist();
 }
@@ -896,8 +1008,6 @@ function settingsHTML(){
     <div class="card grid g2">
       <div class="field"><label>ชื่อร้าน/แบรนด์</label>
         <input class="input" value="${esc(s.shopName)}" oninput="updSettings('shopName',this.value)" /></div>
-      <div class="field"><label>ค่าบรรจุภัณฑ์เริ่มต้น (บาท/หน่วย)</label>
-        <input class="input" type="number" step="0.05" value="${s.defaultPackaging}" oninput="updSettings('defaultPackaging',this.value)" /></div>
       <div class="field"><label>ค่าแรงเริ่มต้น (บาท/ชม.)</label>
         <input class="input" type="number" step="5" value="${s.defaultLabor}" oninput="updSettings('defaultLabor',this.value)" /></div>
       <div class="field"><label>ค่าโสหุ้ยเริ่มต้น (%)</label>
@@ -930,14 +1040,16 @@ function loadDemoData(){
   if(!confirm('โหลดข้อมูลตัวอย่างทับข้อมูลปัจจุบันเลยไหม?')) return;
   state.settings = seedSettings();
   state.pantry = seedPantry();
+  state.packaging = seedPackaging();
   state.recipes = seedRecipes(state.pantry);
   ui.recipeId=null;
   render();
   schedulePersist();
 }
 function clearAllData(){
-  if(!confirm('ล้างข้อมูลทั้งหมด (สูตร + คลังวัตถุดิบ) เลยไหม? กู้คืนไม่ได้ถ้าไม่ได้ส่งออกไว้ก่อน')) return;
+  if(!confirm('ล้างข้อมูลทั้งหมด (สูตร + คลังวัตถุดิบ + คลังบรรจุภัณฑ์) เลยไหม? กู้คืนไม่ได้ถ้าไม่ได้ส่งออกไว้ก่อน')) return;
   state.pantry = [];
+  state.packaging = [];
   state.recipes = [];
   ui.recipeId=null;
   render();
@@ -946,7 +1058,7 @@ function clearAllData(){
 
 /* ============================== IMPORT / EXPORT ============================== */
 function exportData(){
-  const payload = JSON.stringify({ settings: state.settings, pantry: state.pantry, recipes: state.recipes, exportedAt: new Date().toISOString() }, null, 2);
+  const payload = JSON.stringify({ settings: state.settings, pantry: state.pantry, packaging: state.packaging, recipes: state.recipes, exportedAt: new Date().toISOString() }, null, 2);
   const blob = new Blob([payload], {type:'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -965,6 +1077,7 @@ function importData(input){
       if(!data.pantry || !data.recipes) throw new Error('รูปแบบไฟล์ไม่ถูกต้อง');
       state.settings = Object.assign(seedSettings(), data.settings||{});
       state.pantry = data.pantry;
+      state.packaging = data.packaging || [];
       state.recipes = data.recipes;
       ui.recipeId = null;
       render();
