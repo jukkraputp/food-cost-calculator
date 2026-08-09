@@ -378,12 +378,15 @@ function calcRecipe(r){
 /* ============================== RENDER ROOT ============================== */
 const app = document.getElementById('app');
 function render(){
-  app.innerHTML = shellHTML();
   // shellHTML() rebuilds the tab bar from scratch, which resets its
   // horizontal scroll to 0 — without this the bar visibly snaps back to the
-  // first tab right after tapping one further along it.
-  const activeTab = document.querySelector('.tab-btn.active');
-  if(activeTab) activeTab.scrollIntoView({inline:'nearest', block:'nearest'});
+  // first tab right after tapping one further along it. Capture the exact
+  // offset and restore it as-is, so the bar never visibly moves.
+  const prevTabs = document.querySelector('.tabs');
+  const prevScrollLeft = prevTabs ? prevTabs.scrollLeft : 0;
+  app.innerHTML = shellHTML();
+  const tabs = document.querySelector('.tabs');
+  if(tabs) tabs.scrollLeft = prevScrollLeft;
 }
 
 function shellHTML(){
