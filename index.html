@@ -440,7 +440,18 @@ const SHARE_CODE_VERSION = 1;
 
 function encodeShareCode(payload){
   const json = JSON.stringify(payload);
-  return SHARE_CODE_PREFIX + compressString(json);
+  // LZW only pays off once the JSON has real repeated content (multiple
+  // ingredients/recipes sharing names). For a small or near-empty payload
+  // its dictionary codes (3+ varint bytes each once they exceed the
+  // pre-seeded 65536-entry BMP alphabet) can cost more than the literal
+  // bytes they replace, making the "compressed" code longer than plain
+  // base64 of the raw UTF-8 JSON. Compute both and keep whichever is
+  // shorter — never pay the compression tax when it doesn't pay off.
+  const compressed = compressString(json);
+  const plain = bytesToBase64Url(Array.from(new TextEncoder().encode(json)));
+  return compressed.length <= plain.length
+    ? SHARE_CODE_PREFIX + 'L' + compressed
+    : SHARE_CODE_PREFIX + 'P' + plain;
 }
 
 function decodeShareCode(code){
@@ -448,10 +459,14 @@ function decodeShareCode(code){
   if(!trimmed.startsWith(SHARE_CODE_PREFIX)){
     return {ok:false, error:'ไม่ใช่โค้ดสูตรอาหารที่ถูกต้อง'};
   }
-  const body = trimmed.slice(SHARE_CODE_PREFIX.length);
+  const rest = trimmed.slice(SHARE_CODE_PREFIX.length);
+  const marker = rest[0];
+  const body = rest.slice(1);
   let json;
   try{
-    json = decompressString(body);
+    if(marker==='L') json = decompressString(body);
+    else if(marker==='P') json = new TextDecoder().decode(new Uint8Array(base64UrlToBytes(body)));
+    else throw new Error('unknown encoding marker');
   }catch(e){
     return {ok:false, error:'โค้ดไม่ถูกต้องหรือเสียหาย'};
   }
