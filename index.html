@@ -461,6 +461,65 @@ function decodeShareCode(code){
 }
 /* ===== SHARE-CODE-ENVELOPE:END ===== */
 
+/* ============================== SHARE CODE: BUILD PAYLOAD ============================== */
+function buildSharePayload(recipeIds){
+  const packagingMap = new Map(); // dedupe key -> {key, name, unitCost}
+  let pkCounter = 0;
+
+  function packagingKeyFor(r){
+    if(r.packagingId){
+      const pkg = findPackaging(r.packagingId);
+      if(!pkg) return null;
+      const dedupeKey = 'id:'+r.packagingId;
+      if(!packagingMap.has(dedupeKey)){
+        packagingMap.set(dedupeKey, {key:'pk'+(pkCounter++), name:pkg.name, unitCost:packagingUnitCost(pkg)});
+      }
+      return packagingMap.get(dedupeKey).key;
+    }
+    if(r.unlinkedPackaging){
+      // dedupe by value too, so re-sharing an already-imported (still
+      // unmapped) recipe alongside others using the same packaging doesn't
+      // duplicate the packaging entry in the outgoing payload
+      const dedupeKey = 'name:'+r.unlinkedPackaging.name+'|cost:'+r.unlinkedPackaging.unitCost;
+      if(!packagingMap.has(dedupeKey)){
+        packagingMap.set(dedupeKey, {key:'pk'+(pkCounter++), name:r.unlinkedPackaging.name, unitCost:r.unlinkedPackaging.unitCost});
+      }
+      return packagingMap.get(dedupeKey).key;
+    }
+    return null;
+  }
+
+  const recipes = recipeIds.map(id=>{
+    const r = findRecipe(id);
+    return {
+      name: r.name,
+      category: r.category,
+      yieldQty: Number(r.yieldQty)||0,
+      yieldUnit: r.yieldUnit,
+      laborRate: Number(r.laborRate)||0,
+      laborHours: Number(r.laborHours)||0,
+      gasPct: Number(r.gasPct)||0,
+      deliveryCost: Number(r.deliveryCost)||0,
+      overheadPct: Number(r.overheadPct)||0,
+      targetPct: Number(r.targetPct)||0,
+      packagingKey: packagingKeyFor(r),
+      ingredients: r.ingredients.map(ing=>({
+        name: ingName(ing),
+        qty: Number(ing.qty)||0,
+        unit: ingUnitLabel(ing),
+        unitCost: ingUnitCost(ing),
+      })),
+    };
+  });
+
+  return {
+    v: SHARE_CODE_VERSION,
+    type: 'recipe-bundle',
+    packaging: Array.from(packagingMap.values()),
+    recipes,
+  };
+}
+
 function pantryUnitCost(p){
   const f = UNIT_FACTOR[p.buyUnit] || 1;
   const denom = (Number(p.buyQty)||0) * f;
