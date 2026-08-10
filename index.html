@@ -592,7 +592,7 @@ function calcRecipe(r){
   const mat = r.ingredients.reduce((s,i)=>s+ingCost(i),0);
   const yieldQty = Number(r.yieldQty)||0;
   const pkg = r.packagingId ? findPackaging(r.packagingId) : null;
-  const packUnitCost = pkg ? packagingUnitCost(pkg) : 0;
+  const packUnitCost = pkg ? packagingUnitCost(pkg) : (r.unlinkedPackaging ? Number(r.unlinkedPackaging.unitCost)||0 : 0);
   const pack = packUnitCost * yieldQty;
   const costBasic = mat+pack;
   const perPieceBasic = yieldQty? costBasic/yieldQty : 0;
@@ -621,6 +621,10 @@ function calcRecipe(r){
   });
   return {mat,pack,costBasic,perPieceBasic,labor,overhead,gas,fullCost,perPieceFull,suggestRaw,suggest,
     revenue,profit,margin,profitBasic,marginBasic,compare,yieldQty};
+}
+
+function recipeNeedsMapping(r){
+  return r.ingredients.some(i => i.mode !== 'pantry') || !!r.unlinkedPackaging;
 }
 
 /* ============================== RENDER ROOT ============================== */
