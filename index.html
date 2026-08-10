@@ -436,19 +436,143 @@ function decompressString(code){
 
 /* ===== SHARE-CODE-ENVELOPE:START ===== */
 const SHARE_CODE_PREFIX = 'FCC1:';
-const SHARE_CODE_VERSION = 1;
+const SHARE_CODE_VERSION = 2;
+
+// Binary wire format (v2) — replaces plain JSON for the payload bytes.
+// JSON's quotes/commas/brackets/field-names cost more than the actual
+// recipe data for a typical share (a near-empty recipe was 284 bytes of
+// JSON for ~45 bytes of real Thai text). Every field is packed instead as:
+// varint counts/enums, length-prefixed UTF-8 strings, and fixed-point
+// (×100, i.e. satang) varints for money/percent/quantity fields — the same
+// 2-decimal precision the app already displays everywhere via .toFixed(2),
+// so this loses no precision a user could actually see. `category` is
+// stored as an index into RECIPE_CATS (always one of 4 known values from
+// the editor's own dropdown) rather than repeating the Thai text.
+function writeVarint(out, n){
+  out.push(...varintEncode([Math.max(0, Math.round(Number(n)||0))]));
+}
+function writeFixed(out, n){
+  writeVarint(out, Math.round((Number(n)||0)*100));
+}
+function writeString(out, s){
+  const strBytes = Array.from(new TextEncoder().encode(String(s==null?'':s)));
+  writeVarint(out, strBytes.length);
+  for(const b of strBytes) out.push(b);
+}
+function readVarint(r){
+  let n=0, mult=1, b;
+  do{
+    if(r.pos >= r.bytes.length) throw new Error('unexpected end of data');
+    b = r.bytes[r.pos++];
+    n += (b & 0x7f) * mult;
+    mult *= 128;
+  } while(b & 0x80);
+  return n;
+}
+function readFixed(r){ return readVarint(r)/100; }
+function readString(r){
+  const len = readVarint(r);
+  if(r.pos+len > r.bytes.length) throw new Error('unexpected end of data');
+  const strBytes = r.bytes.slice(r.pos, r.pos+len);
+  r.pos += len;
+  return new TextDecoder().decode(new Uint8Array(strBytes));
+}
+
+function packSharePayload(payload){
+  const out = [];
+  writeVarint(out, payload.v);
+  writeVarint(out, payload.packaging.length);
+  const keyToIndex = {};
+  payload.packaging.forEach((p,i)=>{
+    keyToIndex[p.key] = i;
+    writeString(out, p.name);
+    writeFixed(out, p.unitCost);
+  });
+  writeVarint(out, payload.recipes.length);
+  payload.recipes.forEach(r=>{
+    writeString(out, r.name);
+    writeVarint(out, Math.max(0, RECIPE_CATS.indexOf(r.category)));
+    writeFixed(out, r.yieldQty);
+    writeString(out, r.yieldUnit);
+    writeFixed(out, r.laborRate);
+    writeFixed(out, r.laborHours);
+    writeFixed(out, r.gasPct);
+    writeFixed(out, r.deliveryCost);
+    writeFixed(out, r.overheadPct);
+    writeFixed(out, r.targetPct);
+    const pkgIdx = (r.packagingKey!=null && r.packagingKey in keyToIndex) ? keyToIndex[r.packagingKey]+1 : 0;
+    writeVarint(out, pkgIdx);
+    writeVarint(out, r.ingredients.length);
+    r.ingredients.forEach(ing=>{
+      writeString(out, ing.name);
+      writeFixed(out, ing.qty);
+      writeString(out, ing.unit);
+      writeFixed(out, ing.unitCost);
+    });
+  });
+  return out;
+}
+
+function unpackSharePayload(bytes){
+  const r = {bytes, pos:0};
+  const v = readVarint(r);
+  const packagingCount = readVarint(r);
+  const packaging = [];
+  for(let i=0;i<packagingCount;i++){
+    const name = readString(r);
+    const unitCost = readFixed(r);
+    packaging.push({key:'pk'+i, name, unitCost});
+  }
+  const recipeCount = readVarint(r);
+  if(recipeCount===0) throw new Error('empty recipes');
+  const recipes = [];
+  for(let i=0;i<recipeCount;i++){
+    const name = readString(r);
+    const category = RECIPE_CATS[readVarint(r)] || RECIPE_CATS[0];
+    const yieldQty = readFixed(r);
+    const yieldUnit = readString(r);
+    const laborRate = readFixed(r);
+    const laborHours = readFixed(r);
+    const gasPct = readFixed(r);
+    const deliveryCost = readFixed(r);
+    const overheadPct = readFixed(r);
+    const targetPct = readFixed(r);
+    const pkgIdx = readVarint(r);
+    const packagingKey = pkgIdx>0 ? 'pk'+(pkgIdx-1) : null;
+    const ingCount = readVarint(r);
+    const ingredients = [];
+    for(let j=0;j<ingCount;j++){
+      const iname = readString(r);
+      const qty = readFixed(r);
+      const unit = readString(r);
+      const unitCost = readFixed(r);
+      ingredients.push({name:iname, qty, unit, unitCost});
+    }
+    recipes.push({name,category,yieldQty,yieldUnit,laborRate,laborHours,gasPct,deliveryCost,overheadPct,targetPct,packagingKey,ingredients});
+  }
+  return {v, type:'recipe-bundle', packaging, recipes};
+}
+
+function bytesToBinaryString(bytes){
+  let s = '';
+  for(const b of bytes) s += String.fromCharCode(b);
+  return s;
+}
+function binaryStringToBytes(s){
+  const bytes = [];
+  for(let i=0;i<s.length;i++) bytes.push(s.charCodeAt(i));
+  return bytes;
+}
 
 function encodeShareCode(payload){
-  const json = JSON.stringify(payload);
-  // LZW only pays off once the JSON has real repeated content (multiple
-  // ingredients/recipes sharing names). For a small or near-empty payload
-  // its dictionary codes (3+ varint bytes each once they exceed the
-  // pre-seeded 65536-entry BMP alphabet) can cost more than the literal
-  // bytes they replace, making the "compressed" code longer than plain
-  // base64 of the raw UTF-8 JSON. Compute both and keep whichever is
-  // shorter — never pay the compression tax when it doesn't pay off.
-  const compressed = compressString(json);
-  const plain = bytesToBase64Url(Array.from(new TextEncoder().encode(json)));
+  const bytes = packSharePayload(payload);
+  // LZW only pays off once there's real repeated content (multiple
+  // ingredients/recipes sharing names). For a small/near-empty payload its
+  // dictionary codes (3+ varint bytes each once they exceed the pre-seeded
+  // 65536-entry BMP alphabet) can cost more than the literal bytes they
+  // replace. Compute both and keep whichever is shorter.
+  const compressed = compressString(bytesToBinaryString(bytes));
+  const plain = bytesToBase64Url(bytes);
   return compressed.length <= plain.length
     ? SHARE_CODE_PREFIX + 'L' + compressed
     : SHARE_CODE_PREFIX + 'P' + plain;
@@ -462,21 +586,16 @@ function decodeShareCode(code){
   const rest = trimmed.slice(SHARE_CODE_PREFIX.length);
   const marker = rest[0];
   const body = rest.slice(1);
-  let json;
-  try{
-    if(marker==='L') json = decompressString(body);
-    else if(marker==='P') json = new TextDecoder().decode(new Uint8Array(base64UrlToBytes(body)));
-    else throw new Error('unknown encoding marker');
-  }catch(e){
-    return {ok:false, error:'โค้ดไม่ถูกต้องหรือเสียหาย'};
-  }
   let payload;
   try{
-    payload = JSON.parse(json);
+    const bytes = marker==='L' ? binaryStringToBytes(decompressString(body))
+      : marker==='P' ? base64UrlToBytes(body)
+      : (()=>{ throw new Error('unknown encoding marker'); })();
+    payload = unpackSharePayload(bytes);
   }catch(e){
     return {ok:false, error:'โค้ดไม่ถูกต้องหรือเสียหาย'};
   }
-  if(!payload || typeof payload!=='object' || payload.type!=='recipe-bundle' || !Array.isArray(payload.recipes) || !payload.recipes.length){
+  if(!payload || payload.type!=='recipe-bundle' || !Array.isArray(payload.recipes) || !payload.recipes.length){
     return {ok:false, error:'โค้ดไม่ถูกต้องหรือเสียหาย'};
   }
   if(typeof payload.v!=='number' || payload.v > SHARE_CODE_VERSION){
