@@ -1197,7 +1197,11 @@ function addUnlinkedPackagingToWarehouse(rid){
   mapPackagingToWarehouse(rid, newItem.id);
 }
 function ingTableInner(r){
-  if(!r.ingredients.length) return `<div class="muted" style="font-size:13px;padding:10px 0">ยังไม่มีวัตถุดิบ — กด "+ เพิ่มวัตถุดิบ" ด้านบน</div>`;
+  if(!r.ingredients.length){
+    return state.pantry.length
+      ? `<div class="muted" style="font-size:13px;padding:10px 0">ยังไม่มีวัตถุดิบ — กด "+ เพิ่มวัตถุดิบ" ด้านบน</div>`
+      : `<div class="muted" style="font-size:13px;padding:10px 0">ยังไม่มีวัตถุดิบในคลัง — กด "+ เพิ่มวัตถุดิบ" เพื่อไปเพิ่มวัตถุดิบในคลังก่อน</div>`;
+  }
   return r.ingredients.map((ing,idx)=>ingRowHTML(r,idx)).join('');
 }
 function ingRowHTML(r, idx){
@@ -1222,6 +1226,15 @@ function ingRowHTML(r, idx){
 
 function addIngredient(rid){
   const r = findRecipe(rid);
+  if(!state.pantry.length){
+    if(confirm('ยังไม่มีวัตถุดิบในคลังวัตถุดิบ ต้องการไปเพิ่มวัตถุดิบตอนนี้เลยไหม?')){
+      ui.tab = 'pantry';
+      ui.pantryAdding = true;
+      ui.pantryEditing = null;
+      render();
+    }
+    return;
+  }
   const first = state.pantry[0];
   r.ingredients.push({id:uid('i'), mode:'pantry', pantryId: first? first.id : null, qty:0});
   document.getElementById('ingTable_'+rid).innerHTML = ingTableInner(r);
