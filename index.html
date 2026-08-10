@@ -108,6 +108,12 @@ main{max-width:1180px;margin:0 auto;padding:26px 22px 90px}
 .recipe-card{background:var(--color-surface-2);border-radius:24px;padding:16px 18px;display:flex;flex-direction:column;gap:10px;
   box-shadow:var(--shadow-sm);cursor:pointer;border:1px solid transparent}
 .recipe-card:hover{border-color:var(--color-accent-300)}
+.recipe-card{position:relative}
+.recipe-card.selected{border-color:var(--color-accent);background:var(--color-accent-100)}
+.select-check{position:absolute;top:12px;right:12px;width:22px;height:22px;border-radius:999px;
+  border:2px solid var(--color-accent);display:flex;align-items:center;justify-content:center;
+  font-size:13px;color:var(--color-accent);background:var(--color-surface-2)}
+.select-check.checked{background:var(--color-accent);color:#fff}
 .recipe-card .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
 .recipe-card .stat{background:var(--color-bg);border-radius:12px;padding:7px 9px}
 .recipe-card .stat .l{font-size:9.5px;color:rgba(32,30,29,.55)}
@@ -246,7 +252,7 @@ let state = { settings: null, pantry: [], packaging: [], recipes: [] };
 
 let ui = { tab:'recipes', recipeId:null, search:'', pantrySearch:'', pantryEditing:null, pantryAdding:false,
   packagingSearch:'', packagingEditing:null, packagingAdding:false,
-  showShareModal:false, shareCode:'',
+  showShareModal:false, shareCode:'', selectionMode:false, selectedIds:new Set(),
   quick:{ mat:100, pack:10, labor:30, gas:10, delivery:0, overhead:15, yieldQty:10, target:35, sell:0 } };
 
 /* ============================== PERSISTENCE ============================== */
@@ -701,8 +707,10 @@ function recipesListHTML(){
   const list = state.recipes.filter(r=> !q || r.name.toLowerCase().includes(q));
   return `
   <div class="toolbar">
+    ${ui.selectionMode ? selectionToolbarHTML() : `
     <input class="input" placeholder="ค้นหาเมนู เช่น บราวนี่" value="${esc(ui.search)}" oninput="ui.search=this.value; renderRecipeGrid()" />
     <span class="tag tag-neutral">ทั้งหมด ${state.recipes.length} สูตร</span>
+    `}
   </div>
   <div class="recipe-grid" id="recipeGrid">${recipeGridInner(list)}</div>
   ${ui.showShareModal ? shareModalHTML() : ''}
@@ -717,8 +725,11 @@ function recipeGridInner(list){
   const cards = list.map(r=>{
     const c = calcRecipe(r);
     const marginTag = c.margin>=0 ? 'tag-accent-2' : 'tag-danger';
+    const selected = ui.selectionMode && ui.selectedIds.has(r.id);
     return `
-    <div class="recipe-card" onclick="openRecipe('${r.id}')">
+    <div class="recipe-card ${selected?'selected':''}" onclick="onRecipeCardClick('${r.id}')"
+      onpointerdown="startLongPress('${r.id}')" onpointerup="cancelLongPress()" onpointerleave="cancelLongPress()" onpointercancel="cancelLongPress()">
+      ${ui.selectionMode ? `<div class="select-check ${selected?'checked':''}">${selected?'✓':''}</div>` : ''}
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
         <div><span class="tag tag-outline">${esc(r.category)} · ${r.yieldQty} ${esc(r.yieldUnit)}/สูตร</span>
           ${recipeNeedsMapping(r) ? `<span class="tag tag-danger" style="margin-left:6px">ต้องเชื่อมวัตถุดิบ</span>` : ''}
@@ -731,16 +742,17 @@ function recipeGridInner(list){
         <div class="stat"><div class="l">ราคาขาย</div><div class="v num">${num2(r.sellPrice)}</div></div>
         <div class="stat" style="background:var(--color-accent-2-100)"><div class="l" style="color:var(--color-accent-2-800)">กำไร/สูตร</div><div class="v num" style="color:var(--color-accent-2-800)">${num2(c.profit)}</div></div>
       </div>
+      ${!ui.selectionMode ? `
       <div style="display:flex;gap:6px;margin-top:2px" onclick="event.stopPropagation()">
         <button class="btn btn-secondary btn-sm" onclick="shareRecipe('${r.id}')">แชร์</button>
         <button class="btn btn-secondary btn-sm" onclick="duplicateRecipe('${r.id}')">ทำสำเนา</button>
         <button class="btn btn-danger btn-sm" onclick="deleteRecipe('${r.id}')" style="margin-left:auto">ลบ</button>
-      </div>
+      </div>` : ''}
     </div>`;
   }).join('');
-  return cards + `<div class="newcard" onclick="newRecipe()">
+  return cards + (ui.selectionMode ? '' : `<div class="newcard" onclick="newRecipe()">
     <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
-    สร้างสูตรใหม่</div>`;
+    สร้างสูตรใหม่</div>`);
 }
 
 function newRecipe(){
@@ -817,6 +829,48 @@ function copyShareCode(){
   } else {
     fallbackCopy(ta, showStatus);
   }
+}
+
+let longPressTimer = null;
+function startLongPress(id){
+  clearTimeout(longPressTimer);
+  longPressTimer = setTimeout(()=>enterSelectionMode(id), 500);
+}
+function cancelLongPress(){ clearTimeout(longPressTimer); }
+function enterSelectionMode(id){
+  ui.selectionMode = true;
+  ui.selectedIds = new Set([id]);
+  render();
+}
+function exitSelectionMode(){
+  ui.selectionMode = false;
+  ui.selectedIds = new Set();
+  render();
+}
+function toggleRecipeSelection(id){
+  if(ui.selectedIds.has(id)) ui.selectedIds.delete(id); else ui.selectedIds.add(id);
+  if(ui.selectedIds.size===0){ exitSelectionMode(); return; }
+  render();
+}
+function onRecipeCardClick(id){
+  if(ui.selectionMode){ toggleRecipeSelection(id); } else { openRecipe(id); }
+}
+function shareSelectedRecipes(){
+  if(ui.selectedIds.size===0) return;
+  ui.shareCode = encodeShareCode(buildSharePayload(Array.from(ui.selectedIds)));
+  ui.showShareModal = true;
+  ui.selectionMode = false;
+  ui.selectedIds = new Set();
+  render();
+}
+function selectionToolbarHTML(){
+  return `
+    <span class="tag tag-accent">เลือกแล้ว ${ui.selectedIds.size} สูตร</span>
+    <div style="display:flex;gap:8px;margin-left:auto">
+      <button class="btn btn-secondary btn-sm" onclick="exitSelectionMode()">ยกเลิก</button>
+      <button class="btn btn-primary btn-sm" ${ui.selectedIds.size===0?'disabled':''} onclick="shareSelectedRecipes()">คัดลอกโค้ด</button>
+    </div>
+  `;
 }
 
 /* ============================== RECIPES: EDITOR ============================== */
