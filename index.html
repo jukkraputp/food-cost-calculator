@@ -310,6 +310,120 @@ function baht(n){ n = Number(n)||0; return n.toLocaleString('en-US',{minimumFrac
 function num2(n){ n=Number(n)||0; return n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
+/* ============================== SHARE CODE: CODEC ============================== */
+/* ===== SHARE-CODE-CODEC:START ===== */
+// Minimal LZW dictionary compressor over UTF-16 code units, plus varint byte
+// packing and URL-safe base64. Not a port of any library — same well-known
+// idea (back-reference repeated substrings via a growing dictionary), written
+// fresh so share codes stay short without adding an external dependency.
+// Iterating by code unit (not by Unicode code point) means every symbol that
+// can appear — including each half of a surrogate pair — is guaranteed to
+// already be seeded in the dictionary, so there's no "unseen first symbol"
+// edge case to special-case.
+
+function lzwCompress(str){
+  const dict = new Map();
+  for(let i=0;i<65536;i++) dict.set(String.fromCharCode(i), i);
+  let nextCode = 65536;
+  let w = '';
+  const codes = [];
+  for(let i=0;i<str.length;i++){
+    const ch = str[i];
+    const wc = w + ch;
+    if(dict.has(wc)){
+      w = wc;
+    } else {
+      codes.push(dict.get(w));
+      dict.set(wc, nextCode++);
+      w = ch;
+    }
+  }
+  if(w !== '') codes.push(dict.get(w));
+  return codes;
+}
+
+function lzwDecompress(codes){
+  if(codes.length === 0) return '';
+  const dict = new Map();
+  for(let i=0;i<65536;i++) dict.set(i, String.fromCharCode(i));
+  let nextCode = 65536;
+  let w = dict.get(codes[0]);
+  let result = w;
+  for(let i=1;i<codes.length;i++){
+    const k = codes[i];
+    let entry;
+    if(dict.has(k)) entry = dict.get(k);
+    else if(k === nextCode) entry = w + w[0];
+    else throw new Error('corrupt LZW stream');
+    result += entry;
+    dict.set(nextCode++, w + entry[0]);
+    w = entry;
+  }
+  return result;
+}
+
+// Plain-arithmetic (no bitwise ops) LEB128-style varint, so there's no 32-bit
+// overflow risk even if a very large bundle pushes dictionary codes high.
+function varintEncode(codes){
+  const bytes = [];
+  for(const code of codes){
+    let n = code;
+    while(true){
+      const b = n % 128;
+      n = Math.floor(n / 128);
+      if(n !== 0){ bytes.push(b | 0x80); } else { bytes.push(b); break; }
+    }
+  }
+  return bytes;
+}
+function varintDecode(bytes){
+  const codes = [];
+  let n = 0, mult = 1;
+  for(const b of bytes){
+    n += (b & 0x7f) * mult;
+    if(b & 0x80){ mult *= 128; } else { codes.push(n); n = 0; mult = 1; }
+  }
+  return codes;
+}
+
+const B64URL_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+function bytesToBase64Url(bytes){
+  let out = '';
+  for(let i=0;i<bytes.length;i+=3){
+    const b0=bytes[i], b1=bytes[i+1], b2=bytes[i+2];
+    const has1 = i+1<bytes.length, has2 = i+2<bytes.length;
+    out += B64URL_CHARS[b0>>2];
+    out += B64URL_CHARS[((b0&3)<<4) | (has1? b1>>4 : 0)];
+    if(has1) out += B64URL_CHARS[((b1&15)<<2) | (has2? b2>>6 : 0)];
+    if(has2) out += B64URL_CHARS[b2&63];
+  }
+  return out;
+}
+function base64UrlToBytes(s){
+  const rev = {};
+  for(let i=0;i<B64URL_CHARS.length;i++) rev[B64URL_CHARS[i]] = i;
+  const bytes = [];
+  let buffer = 0, bits = 0;
+  for(const ch of s){
+    if(!(ch in rev)) throw new Error('invalid base64url character');
+    buffer = (buffer << 6) | rev[ch];
+    bits += 6;
+    if(bits >= 8){
+      bits -= 8;
+      bytes.push((buffer >> bits) & 0xff);
+    }
+  }
+  return bytes;
+}
+
+function compressString(str){
+  return bytesToBase64Url(varintEncode(lzwCompress(str)));
+}
+function decompressString(code){
+  return lzwDecompress(varintDecode(base64UrlToBytes(code)));
+}
+/* ===== SHARE-CODE-CODEC:END ===== */
+
 function pantryUnitCost(p){
   const f = UNIT_FACTOR[p.buyUnit] || 1;
   const denom = (Number(p.buyQty)||0) * f;
