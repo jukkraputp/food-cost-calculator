@@ -959,11 +959,7 @@ function recipeEditorHTML(id){
       <div class="card">
         <h3 style="font-size:16px;margin-bottom:8px">ต้นทุนอื่น</h3>
         <div class="grid g2">
-          <div class="field"><label>บรรจุภัณฑ์ที่ใช้</label>
-            <select class="input" onchange="updRecipeField('${id}','packagingId',this.value)">
-              <option value="">— ไม่ใช้บรรจุภัณฑ์ —</option>
-              ${state.packaging.map(p=>`<option value="${p.id}" ${p.id===r.packagingId?'selected':''}>${esc(p.name)} (${packagingUnitCost(p).toFixed(2)} บาท/ชิ้น)</option>`).join('')}
-            </select></div>
+          ${packagingFieldHTML(r)}
           <div class="field"><label>ค่าแก๊ส/ไฟ (% ของวัตถุดิบ+บรรจุภัณฑ์)</label>
             <input class="input" type="number" min="0" step="1" value="${r.gasPct}"
               oninput="updRecipeField('${id}','gasPct',this.value)" /></div>
@@ -1030,6 +1026,34 @@ function addUnlinkedIngredientToPantry(rid, idx){
   const newPantryItem = { id: uid('p'), name: ing.name, category: PANTRY_CATS[0], family, buyPrice: Number(ing.unitCost)||0, buyQty: 1, buyUnit };
   state.pantry.push(newPantryItem);
   mapIngredientToPantry(rid, idx, newPantryItem.id);
+}
+function packagingFieldHTML(r){
+  const isUnlinked = !!r.unlinkedPackaging;
+  return `<div class="field" id="packagingField_${r.id}"><label>บรรจุภัณฑ์ที่ใช้</label>
+    <select class="input" onchange="mapPackagingToWarehouse('${r.id}',this.value)">
+      ${isUnlinked
+        ? `<option value="" selected disabled>🟡 (นำเข้า) ${esc(r.unlinkedPackaging.name)} — ${num2(r.unlinkedPackaging.unitCost)} บาท/ชิ้น</option>`
+        : `<option value="" ${!r.packagingId?'selected':''}>— ไม่ใช้บรรจุภัณฑ์ —</option>`}
+      ${state.packaging.map(p=>`<option value="${p.id}" ${!isUnlinked && p.id===r.packagingId?'selected':''}>${esc(p.name)} (${packagingUnitCost(p).toFixed(2)} บาท/ชิ้น)</option>`).join('')}
+    </select>
+    ${isUnlinked ? `<button class="btn btn-ghost btn-sm" style="align-self:flex-start;padding:2px 4px;font-size:11px" onclick="addUnlinkedPackagingToWarehouse('${r.id}')">+ เพิ่มเข้าคลังบรรจุภัณฑ์</button>` : ''}
+  </div>`;
+}
+function mapPackagingToWarehouse(rid, packagingId){
+  const r = findRecipe(rid);
+  r.packagingId = packagingId;
+  r.unlinkedPackaging = null;
+  document.getElementById('packagingField_'+rid).outerHTML = packagingFieldHTML(r);
+  refreshCalcPanel(rid);
+  refreshUnmappedBanner(rid);
+  schedulePersist();
+}
+function addUnlinkedPackagingToWarehouse(rid){
+  const r = findRecipe(rid);
+  const snap = r.unlinkedPackaging;
+  const newItem = { id: uid('pk'), name: snap.name, buyPrice: Number(snap.unitCost)||0, buyQty: 1, buyUnit: 'ชิ้น', piecesPerBox: 1 };
+  state.packaging.push(newItem);
+  mapPackagingToWarehouse(rid, newItem.id);
 }
 function ingTableInner(r){
   if(!r.ingredients.length) return `<div class="muted" style="font-size:13px;padding:10px 0">ยังไม่มีวัตถุดิบ — กด "+ เพิ่มวัตถุดิบ" ด้านบน</div>`;
