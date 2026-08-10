@@ -539,16 +539,16 @@ function applyImportedBundle(payload){
     const pkgSnapshot = rp.packagingKey ? packagingByKey[rp.packagingKey] : null;
     return {
       id: uid('r'),
-      name: rp.name || 'สูตรนำเข้า',
+      name: String(rp.name || 'สูตรนำเข้า'),
       category: RECIPE_CATS.includes(rp.category) ? rp.category : RECIPE_CATS[0],
       yieldQty: Number(rp.yieldQty)||0,
-      yieldUnit: rp.yieldUnit || 'ชิ้น',
+      yieldUnit: String(rp.yieldUnit || 'ชิ้น'),
       ingredients: (rp.ingredients||[]).map(ing=>({
         id: uid('i'),
         mode: 'unlinked',
-        name: ing.name || '(ไม่มีชื่อ)',
+        name: String(ing.name || '(ไม่มีชื่อ)'),
         qty: Number(ing.qty)||0,
-        unit: ing.unit || 'หน่วย',
+        unit: String(ing.unit || 'หน่วย'),
         unitCost: Number(ing.unitCost)||0,
       })),
       packagingId: '',
@@ -746,7 +746,7 @@ function recipeGridInner(list){
         <div class="stat" style="background:var(--color-accent-2-100)"><div class="l" style="color:var(--color-accent-2-800)">กำไร/สูตร</div><div class="v num" style="color:var(--color-accent-2-800)">${num2(c.profit)}</div></div>
       </div>
       ${!ui.selectionMode ? `
-      <div style="display:flex;gap:6px;margin-top:2px" onclick="event.stopPropagation()">
+      <div style="display:flex;gap:6px;margin-top:2px" onclick="event.stopPropagation()" onpointerdown="event.stopPropagation()">
         <button class="btn btn-secondary btn-sm" onclick="shareRecipe('${r.id}')">แชร์</button>
         <button class="btn btn-secondary btn-sm" onclick="duplicateRecipe('${r.id}')">ทำสำเนา</button>
         <button class="btn btn-danger btn-sm" onclick="deleteRecipe('${r.id}')" style="margin-left:auto">ลบ</button>
@@ -910,7 +910,14 @@ function submitImport(){
     render();
     return;
   }
-  const imported = applyImportedBundle(result.payload);
+  let imported;
+  try{
+    imported = applyImportedBundle(result.payload);
+  }catch(e){
+    ui.importError = 'โค้ดไม่ถูกต้องหรือเสียหาย';
+    render();
+    return;
+  }
   ui.showImportModal = false;
   ui.importError = '';
   ui.importText = '';
@@ -1032,7 +1039,7 @@ function packagingFieldHTML(r){
   return `<div class="field" id="packagingField_${r.id}"><label>บรรจุภัณฑ์ที่ใช้</label>
     <select class="input" onchange="mapPackagingToWarehouse('${r.id}',this.value)">
       ${isUnlinked
-        ? `<option value="" selected disabled>🟡 (นำเข้า) ${esc(r.unlinkedPackaging.name)} — ${num2(r.unlinkedPackaging.unitCost)} บาท/ชิ้น</option>`
+        ? `<option value="" selected disabled>🟡 (นำเข้า) ${esc(r.unlinkedPackaging.name)} — ${num2(r.unlinkedPackaging.unitCost)} บาท/ชิ้น</option><option value="">— ไม่ใช้บรรจุภัณฑ์ —</option>`
         : `<option value="" ${!r.packagingId?'selected':''}>— ไม่ใช้บรรจุภัณฑ์ —</option>`}
       ${state.packaging.map(p=>`<option value="${p.id}" ${!isUnlinked && p.id===r.packagingId?'selected':''}>${esc(p.name)} (${packagingUnitCost(p).toFixed(2)} บาท/ชิ้น)</option>`).join('')}
     </select>
