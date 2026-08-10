@@ -158,6 +158,8 @@ main{max-width:1180px;margin:0 auto;padding:26px 22px 90px}
 .pantry-row .cost{text-align:right}
 .pantry-cat{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:rgba(32,30,29,.45);margin:16px 0 8px}
 .edit-panel{background:var(--color-accent-100);border-radius:20px;padding:16px 18px;margin-bottom:14px;display:flex;flex-direction:column;gap:12px}
+.modal-overlay{position:fixed;inset:0;background:rgba(46,43,37,.55);display:flex;align-items:center;justify-content:center;padding:20px;z-index:50}
+.modal-panel{background:var(--color-surface-2);border-radius:var(--radius-lg);padding:20px 22px;max-width:480px;width:100%;box-shadow:var(--shadow-lg);max-height:85vh;overflow-y:auto;display:flex;flex-direction:column;gap:10px}
 
 /* settings */
 .settings-block{margin-bottom:26px}
@@ -244,6 +246,7 @@ let state = { settings: null, pantry: [], packaging: [], recipes: [] };
 
 let ui = { tab:'recipes', recipeId:null, search:'', pantrySearch:'', pantryEditing:null, pantryAdding:false,
   packagingSearch:'', packagingEditing:null, packagingAdding:false,
+  showShareModal:false, shareCode:'',
   quick:{ mat:100, pack:10, labor:30, gas:10, delivery:0, overhead:15, yieldQty:10, target:35, sell:0 } };
 
 /* ============================== PERSISTENCE ============================== */
@@ -702,6 +705,7 @@ function recipesListHTML(){
     <span class="tag tag-neutral">ทั้งหมด ${state.recipes.length} สูตร</span>
   </div>
   <div class="recipe-grid" id="recipeGrid">${recipeGridInner(list)}</div>
+  ${ui.showShareModal ? shareModalHTML() : ''}
   `;
 }
 function renderRecipeGrid(){
@@ -717,6 +721,7 @@ function recipeGridInner(list){
     <div class="recipe-card" onclick="openRecipe('${r.id}')">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
         <div><span class="tag tag-outline">${esc(r.category)} · ${r.yieldQty} ${esc(r.yieldUnit)}/สูตร</span>
+          ${recipeNeedsMapping(r) ? `<span class="tag tag-danger" style="margin-left:6px">ต้องเชื่อมวัตถุดิบ</span>` : ''}
           <div class="card-title" style="font-family:var(--font-display);font-size:18px;margin-top:6px">${esc(r.name)}</div>
         </div>
         <span class="tag ${marginTag}">กำไร ${c.margin.toFixed(0)}%</span>
@@ -727,6 +732,7 @@ function recipeGridInner(list){
         <div class="stat" style="background:var(--color-accent-2-100)"><div class="l" style="color:var(--color-accent-2-800)">กำไร/สูตร</div><div class="v num" style="color:var(--color-accent-2-800)">${num2(c.profit)}</div></div>
       </div>
       <div style="display:flex;gap:6px;margin-top:2px" onclick="event.stopPropagation()">
+        <button class="btn btn-secondary btn-sm" onclick="shareRecipe('${r.id}')">แชร์</button>
         <button class="btn btn-secondary btn-sm" onclick="duplicateRecipe('${r.id}')">ทำสำเนา</button>
         <button class="btn btn-danger btn-sm" onclick="deleteRecipe('${r.id}')" style="margin-left:auto">ลบ</button>
       </div>
@@ -765,6 +771,52 @@ function deleteRecipe(id){
   if(ui.recipeId===id) ui.recipeId=null;
   render();
   schedulePersist();
+}
+
+function shareRecipe(id){
+  ui.shareCode = encodeShareCode(buildSharePayload([id]));
+  ui.showShareModal = true;
+  render();
+}
+function closeShareModal(){
+  ui.showShareModal = false;
+  ui.shareCode = '';
+  render();
+}
+function shareModalHTML(){
+  return `
+  <div class="modal-overlay" onclick="closeShareModal()">
+    <div class="modal-panel" onclick="event.stopPropagation()">
+      <h3 style="font-size:16px">โค้ดสูตรอาหาร</h3>
+      <div class="muted" style="font-size:12.5px">คัดลอกโค้ดนี้ส่งให้เพื่อน แล้วให้เพื่อนวางในช่อง "นำเข้าโค้ด"</div>
+      <textarea class="input" id="shareCodeText" readonly rows="6" style="font-family:monospace;font-size:12px;resize:vertical">${esc(ui.shareCode)}</textarea>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn btn-secondary btn-sm" onclick="closeShareModal()">ปิด</button>
+        <button class="btn btn-primary btn-sm" onclick="copyShareCode()">คัดลอก</button>
+      </div>
+      <div class="muted" id="shareCopyStatus" style="font-size:12px;min-height:16px"></div>
+    </div>
+  </div>`;
+}
+function fallbackCopy(ta, showStatus){
+  ta.focus();
+  ta.select();
+  try{
+    const ok = document.execCommand('copy');
+    showStatus(ok ? 'คัดลอกแล้ว' : 'แตะเพื่อเลือกแล้วคัดลอกเอง (Ctrl/Cmd+C)');
+  }catch(e){
+    showStatus('แตะเพื่อเลือกแล้วคัดลอกเอง (Ctrl/Cmd+C)');
+  }
+}
+function copyShareCode(){
+  const ta = document.getElementById('shareCodeText');
+  const status = document.getElementById('shareCopyStatus');
+  const showStatus = (msg)=>{ if(status) status.textContent = msg; };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(ta.value).then(()=>showStatus('คัดลอกแล้ว')).catch(()=>fallbackCopy(ta, showStatus));
+  } else {
+    fallbackCopy(ta, showStatus);
+  }
 }
 
 /* ============================== RECIPES: EDITOR ============================== */
