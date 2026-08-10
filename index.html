@@ -253,7 +253,7 @@ let state = { settings: null, pantry: [], packaging: [], recipes: [] };
 let ui = { tab:'recipes', recipeId:null, search:'', pantrySearch:'', pantryEditing:null, pantryAdding:false,
   packagingSearch:'', packagingEditing:null, packagingAdding:false,
   showShareModal:false, shareCode:'', selectionMode:false, selectedIds:new Set(),
-  showImportModal:false, importError:'',
+  showImportModal:false, importError:'', importText:'',
   quick:{ mat:100, pack:10, labor:30, gas:10, delivery:0, overhead:15, yieldQty:10, target:35, sell:0 } };
 
 /* ============================== PERSISTENCE ============================== */
@@ -878,11 +878,13 @@ function selectionToolbarHTML(){
 function openImportModal(){
   ui.showImportModal = true;
   ui.importError = '';
+  ui.importText = '';
   render();
 }
 function closeImportModal(){
   ui.showImportModal = false;
   ui.importError = '';
+  ui.importText = '';
   render();
 }
 function importModalHTML(){
@@ -891,7 +893,7 @@ function importModalHTML(){
     <div class="modal-panel" onclick="event.stopPropagation()">
       <h3 style="font-size:16px">นำเข้าโค้ดสูตรอาหาร</h3>
       <div class="muted" style="font-size:12.5px">วางโค้ดที่เพื่อนส่งมาที่นี่</div>
-      <textarea class="input" id="importCodeText" rows="6" style="font-family:monospace;font-size:12px;resize:vertical" placeholder="FCC1:..."></textarea>
+      <textarea class="input" id="importCodeText" rows="6" style="font-family:monospace;font-size:12px;resize:vertical" placeholder="FCC1:..." oninput="ui.importText=this.value">${esc(ui.importText)}</textarea>
       ${ui.importError ? `<div class="warn"><div>${esc(ui.importError)}</div></div>` : ''}
       <div style="display:flex;gap:8px;justify-content:flex-end">
         <button class="btn btn-secondary btn-sm" onclick="closeImportModal()">ยกเลิก</button>
@@ -911,6 +913,7 @@ function submitImport(){
   const imported = applyImportedBundle(result.payload);
   ui.showImportModal = false;
   ui.importError = '';
+  ui.importText = '';
   ui.recipeId = null;
   render();
   schedulePersist();
