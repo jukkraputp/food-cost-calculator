@@ -424,6 +424,43 @@ function decompressString(code){
 }
 /* ===== SHARE-CODE-CODEC:END ===== */
 
+/* ===== SHARE-CODE-ENVELOPE:START ===== */
+const SHARE_CODE_PREFIX = 'FCC1:';
+const SHARE_CODE_VERSION = 1;
+
+function encodeShareCode(payload){
+  const json = JSON.stringify(payload);
+  return SHARE_CODE_PREFIX + compressString(json);
+}
+
+function decodeShareCode(code){
+  const trimmed = String(code||'').trim();
+  if(!trimmed.startsWith(SHARE_CODE_PREFIX)){
+    return {ok:false, error:'ไม่ใช่โค้ดสูตรอาหารที่ถูกต้อง'};
+  }
+  const body = trimmed.slice(SHARE_CODE_PREFIX.length);
+  let json;
+  try{
+    json = decompressString(body);
+  }catch(e){
+    return {ok:false, error:'โค้ดไม่ถูกต้องหรือเสียหาย'};
+  }
+  let payload;
+  try{
+    payload = JSON.parse(json);
+  }catch(e){
+    return {ok:false, error:'โค้ดไม่ถูกต้องหรือเสียหาย'};
+  }
+  if(!payload || typeof payload!=='object' || payload.type!=='recipe-bundle' || !Array.isArray(payload.recipes) || !payload.recipes.length){
+    return {ok:false, error:'โค้ดไม่ถูกต้องหรือเสียหาย'};
+  }
+  if(typeof payload.v!=='number' || payload.v > SHARE_CODE_VERSION){
+    return {ok:false, error:'โค้ดนี้สร้างจากแอปเวอร์ชันใหม่กว่า กรุณาอัปเดตแอป'};
+  }
+  return {ok:true, payload};
+}
+/* ===== SHARE-CODE-ENVELOPE:END ===== */
+
 function pantryUnitCost(p){
   const f = UNIT_FACTOR[p.buyUnit] || 1;
   const denom = (Number(p.buyQty)||0) * f;
