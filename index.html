@@ -520,6 +520,44 @@ function buildSharePayload(recipeIds){
   };
 }
 
+/* ============================== SHARE CODE: APPLY IMPORTED BUNDLE ============================== */
+function applyImportedBundle(payload){
+  const packagingByKey = {};
+  (payload.packaging||[]).forEach(p=>{ packagingByKey[p.key] = p; });
+
+  const newRecipes = payload.recipes.map(rp=>{
+    const pkgSnapshot = rp.packagingKey ? packagingByKey[rp.packagingKey] : null;
+    return {
+      id: uid('r'),
+      name: rp.name || 'สูตรนำเข้า',
+      category: RECIPE_CATS.includes(rp.category) ? rp.category : RECIPE_CATS[0],
+      yieldQty: Number(rp.yieldQty)||0,
+      yieldUnit: rp.yieldUnit || 'ชิ้น',
+      ingredients: (rp.ingredients||[]).map(ing=>({
+        id: uid('i'),
+        mode: 'unlinked',
+        name: ing.name || '(ไม่มีชื่อ)',
+        qty: Number(ing.qty)||0,
+        unit: ing.unit || 'หน่วย',
+        unitCost: Number(ing.unitCost)||0,
+      })),
+      packagingId: '',
+      unlinkedPackaging: pkgSnapshot ? {name:pkgSnapshot.name, unitCost:Number(pkgSnapshot.unitCost)||0} : null,
+      laborRate: Number(rp.laborRate)||0,
+      laborHours: Number(rp.laborHours)||0,
+      gasPct: Number(rp.gasPct)||0,
+      deliveryCost: Number(rp.deliveryCost)||0,
+      overheadPct: Number(rp.overheadPct)||0,
+      targetPct: Number(rp.targetPct)||0,
+      sellPrice: 0,
+      note: '',
+    };
+  });
+
+  state.recipes = [...newRecipes, ...state.recipes];
+  return newRecipes;
+}
+
 function pantryUnitCost(p){
   const f = UNIT_FACTOR[p.buyUnit] || 1;
   const denom = (Number(p.buyQty)||0) * f;
