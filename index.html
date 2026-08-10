@@ -253,6 +253,7 @@ let state = { settings: null, pantry: [], packaging: [], recipes: [] };
 let ui = { tab:'recipes', recipeId:null, search:'', pantrySearch:'', pantryEditing:null, pantryAdding:false,
   packagingSearch:'', packagingEditing:null, packagingAdding:false,
   showShareModal:false, shareCode:'', selectionMode:false, selectedIds:new Set(),
+  showImportModal:false, importError:'',
   quick:{ mat:100, pack:10, labor:30, gas:10, delivery:0, overhead:15, yieldQty:10, target:35, sell:0 } };
 
 /* ============================== PERSISTENCE ============================== */
@@ -710,10 +711,12 @@ function recipesListHTML(){
     ${ui.selectionMode ? selectionToolbarHTML() : `
     <input class="input" placeholder="ค้นหาเมนู เช่น บราวนี่" value="${esc(ui.search)}" oninput="ui.search=this.value; renderRecipeGrid()" />
     <span class="tag tag-neutral">ทั้งหมด ${state.recipes.length} สูตร</span>
+    <button class="btn btn-secondary btn-sm" style="margin-left:auto" onclick="openImportModal()">นำเข้าโค้ด</button>
     `}
   </div>
   <div class="recipe-grid" id="recipeGrid">${recipeGridInner(list)}</div>
   ${ui.showShareModal ? shareModalHTML() : ''}
+  ${ui.showImportModal ? importModalHTML() : ''}
   `;
 }
 function renderRecipeGrid(){
@@ -871,6 +874,48 @@ function selectionToolbarHTML(){
       <button class="btn btn-primary btn-sm" ${ui.selectedIds.size===0?'disabled':''} onclick="shareSelectedRecipes()">คัดลอกโค้ด</button>
     </div>
   `;
+}
+function openImportModal(){
+  ui.showImportModal = true;
+  ui.importError = '';
+  render();
+}
+function closeImportModal(){
+  ui.showImportModal = false;
+  ui.importError = '';
+  render();
+}
+function importModalHTML(){
+  return `
+  <div class="modal-overlay" onclick="closeImportModal()">
+    <div class="modal-panel" onclick="event.stopPropagation()">
+      <h3 style="font-size:16px">นำเข้าโค้ดสูตรอาหาร</h3>
+      <div class="muted" style="font-size:12.5px">วางโค้ดที่เพื่อนส่งมาที่นี่</div>
+      <textarea class="input" id="importCodeText" rows="6" style="font-family:monospace;font-size:12px;resize:vertical" placeholder="FCC1:..."></textarea>
+      ${ui.importError ? `<div class="warn"><div>${esc(ui.importError)}</div></div>` : ''}
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn btn-secondary btn-sm" onclick="closeImportModal()">ยกเลิก</button>
+        <button class="btn btn-primary btn-sm" onclick="submitImport()">นำเข้า</button>
+      </div>
+    </div>
+  </div>`;
+}
+function submitImport(){
+  const code = document.getElementById('importCodeText').value;
+  const result = decodeShareCode(code);
+  if(!result.ok){
+    ui.importError = result.error;
+    render();
+    return;
+  }
+  const imported = applyImportedBundle(result.payload);
+  ui.showImportModal = false;
+  ui.importError = '';
+  ui.recipeId = null;
+  render();
+  schedulePersist();
+  const anyUnmapped = imported.some(recipeNeedsMapping);
+  alert('นำเข้าสำเร็จ '+imported.length+' สูตร'+(anyUnmapped ? ' — บางสูตรต้องเชื่อมวัตถุดิบ/บรรจุภัณฑ์กับคลังของคุณ' : ''));
 }
 
 /* ============================== RECIPES: EDITOR ============================== */
